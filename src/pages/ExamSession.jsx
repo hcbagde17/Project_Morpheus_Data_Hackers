@@ -15,10 +15,14 @@ import AdminOverridePanel from '../components/AdminOverridePanel';
 import PreTestCheck from '../components/PreTestCheck';
 import IdentityMonitor from '../components/proctoring/IdentityMonitor';
 import DeviceMonitor from '../components/proctoring/DeviceMonitor';
-import BehaviorMonitor from '../components/proctoring/BehaviorMonitor';
-import AudioMonitor from '../components/proctoring/AudioMonitor';
+import VisionBehaviorMonitor from '../components/proctoring/VisionBehaviorMonitor';
+// import BehaviorMonitor from '../components/proctoring/BehaviorMonitor'; // Deprecated
+import AudioIntelligence from '../components/proctoring/AudioIntelligence';
 import NetworkMonitor from '../components/proctoring/NetworkMonitor';
+import ObjectDetection from '../components/proctoring/ObjectDetection';
 import { getEvidenceCapture } from '../lib/evidenceCapture';
+import { mediaService } from '../lib/proctoringService';
+import { Snackbar } from '@mui/material';
 
 export default function ExamSession() {
     const { testId } = useParams();
@@ -43,13 +47,16 @@ export default function ExamSession() {
     const clickCountRef = useRef(0);
     const clickTimerRef = useRef(null);
     const evidenceRef = useRef(getEvidenceCapture());
+    const [warningMsg, setWarningMsg] = useState('');
+    const [warningOpen, setWarningOpen] = useState(false);
+    const [cameraStream, setCameraStream] = useState(null);
 
     // Map app severities to DB values
     const severityMap = { high: 'RED', medium: 'ORANGE', low: 'ORANGE' };
 
     // Shared flag logger with evidence capture
     const logFlag = useCallback(async (flag) => {
-        if (!session) return;
+        if (!session || submitted) return; // Don't log if already submitted
         const dbSeverity = severityMap[flag.severity] || flag.severity;
         try {
             const { data, error } = await supabase.from('flags').insert({
@@ -61,14 +68,51 @@ export default function ExamSession() {
                 timestamp: new Date().toISOString()
             }).select().single();
 
-            // Capture evidence clip for high-severity (RED) flags
-            if (!error && data && dbSeverity === 'RED') {
+            // Capture evidence clip for high (RED) and medium (ORANGE) severity flags
+            if (!error && data && (dbSeverity === 'RED' || dbSeverity === 'ORANGE')) {
                 evidenceRef.current.captureForFlag(session.id, data.id, 10);
+            }
+
+            // Warn student on ORANGE flag
+            if (dbSeverity === 'ORANGE') {
+                setWarningMsg(`Warning: ${flag.message}`);
+                setWarningOpen(true);
+            }
+
+            // Terminate session immediately on RED flag
+            if (dbSeverity === 'RED') {
+                await stopAllProctoring(); // Force STOP everything immediately
+                await supabase.from('exam_sessions').update({
+                    status: 'terminated',
+                    ended_at: new Date().toISOString(),
+                    score: 0, // Disqualified
+                }).eq('id', session.id);
+
+                setSubmitted(true);
+                setError('Exam terminated due to severe violation: ' + flag.message);
+                // Stop timers
+                if (timerRef.current) clearInterval(timerRef.current);
             }
         } catch (err) {
             console.error('Flag log error', err);
         }
-    }, [session]);
+    }, [session, submitted]);
+
+    const stopAllProctoring = async () => {
+        console.log('Stopping ALL Proctoring Services...');
+        // 1. Stop Media & Evidence
+        mediaService.stop();
+        evidenceRef.current.stop();
+
+        // 2. Stop Backend Services via IPC
+        if (window.electronAPI) {
+            window.electronAPI.stopEnforcement();
+            window.electronAPI.stopNetworkMonitor();
+        }
+
+        // 3. Force UI Unmount (by disabling all)
+        setDisabledModules(['identity', 'device', 'behavior', 'audio', 'network', 'object_detection', 'enforcement']);
+    };
 
     // Load test and questions
     useEffect(() => {
@@ -76,8 +120,73 @@ export default function ExamSession() {
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
             if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+            stopAllProctoring();
         };
     }, [testId]);
+
+    // Stop Proctoring when Submitted or Terminated
+    useEffect(() => {
+        if (submitted) {
+            stopAllProctoring();
+        }
+    }, [submitted]);
+
+    // Handle Dynamic Start/Stop of Backend Services based on Disabled List
+    useEffect(() => {
+        if (!preChecksComplete || submitted) return;
+
+        if (window.electronAPI) {
+            // Enforcement Service
+            if (disabledModules.includes('enforcement')) {
+                window.electronAPI.stopEnforcement();
+            } else {
+                window.electronAPI.startEnforcement();
+            }
+
+            // Network Service
+            if (disabledModules.includes('network')) {
+                window.electronAPI.stopNetworkMonitor();
+            } else {
+                window.electronAPI.startNetworkMonitor();
+            }
+        }
+    }, [disabledModules, preChecksComplete, submitted]);
+
+    // Start Proctoring when PreChecks Complete
+    useEffect(() => {
+        if (preChecksComplete && !submitted && session) {
+            const startProctoringSession = async () => {
+                try {
+                    const stream = await mediaService.start();
+                    setCameraStream(mediaService.cameraStream); // Capture camera stream for Object Detection
+                    evidenceRef.current.start(stream);
+
+                    // Start Backend Services (if not disabled)
+                    if (window.electronAPI) {
+                        if (!disabledModules.includes('enforcement')) window.electronAPI.startEnforcement();
+                        if (!disabledModules.includes('network')) window.electronAPI.startNetworkMonitor();
+                    }
+
+                } catch (err) {
+                    console.error('Failed to start proctoring media:', err);
+                    setError(`Failed to start screen recording: ${err.message || 'Check permissions'}`);
+                }
+            };
+            startProctoringSession();
+        }
+    }, [preChecksComplete, submitted, session]);
+
+    // Admin Override Shortcut (Ctrl + Shift + A)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+                e.preventDefault();
+                setOverrideOpen(true);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
 
     // Network Status & Sync
     useEffect(() => {
@@ -118,18 +227,32 @@ export default function ExamSession() {
             if (tErr) throw tErr;
             setTest(testData);
 
-            // Get questions
+            // Get questions via junction table
             let { data: qData } = await supabase
-                .from('questions').select('*').eq('test_id', testId).order('question_order');
+                .from('test_questions')
+                .select(`
+                    question_order,
+                    marks,
+                    questions (*)
+                `)
+                .eq('test_id', testId)
+                .order('question_order');
+
+            // Flatten structure
+            let flatQuestions = qData?.map(item => ({
+                ...item.questions,
+                marks: item.marks || item.questions.marks, // Override defaults
+                question_order: item.question_order
+            })) || [];
 
             // Randomize if enabled
-            if (testData.randomize_questions && qData?.length > 0) {
+            if (testData.randomize_questions && flatQuestions.length > 0) {
                 // Seeded shuffle using session ID or user ID + test ID to ensure consistency on reload
                 const seed = session?.id || (user.id + testId);
-                qData = seededShuffle(qData, seed);
+                flatQuestions = seededShuffle(flatQuestions, seed);
             }
 
-            setQuestions(qData || []);
+            setQuestions(flatQuestions);
 
             // Check for existing session
             let { data: existingSession } = await supabase
@@ -155,8 +278,20 @@ export default function ExamSession() {
                     test_id: testId, student_id: user.id, status: 'in_progress',
                     device_info: { userAgent: navigator.userAgent, platform: navigator.platform },
                 }).select().single();
-                if (sErr) throw sErr;
-                existingSession = newSession;
+
+                if (sErr) {
+                    // If duplicate key error (session exists), fetch it
+                    if (sErr.code === '23505') {
+                        const { data: retrySession } = await supabase
+                            .from('exam_sessions').select('*')
+                            .eq('test_id', testId).eq('student_id', user.id).single();
+                        existingSession = retrySession;
+                    } else {
+                        throw sErr;
+                    }
+                } else {
+                    existingSession = newSession;
+                }
             }
 
             setSession(existingSession);
@@ -270,6 +405,9 @@ export default function ExamSession() {
                 score: Math.max(0, totalScore),
             }).eq('id', session.id);
 
+            // Stop Proctoring
+            await stopAllProctoring();
+
             // Audit log
             await supabase.from('audit_logs').insert({
                 action: 'EXAM_SUBMITTED', user_id: user.id,
@@ -360,6 +498,9 @@ export default function ExamSession() {
                             {formatTime(timeLeft)}
                         </Typography>
                     </Box>
+                    <IconButton size="small" onClick={() => setOverrideOpen(true)} sx={{ opacity: 0.3, '&:hover': { opacity: 1 } }}>
+                        <Warning fontSize="small" />
+                    </IconButton>
                 </Paper>
 
                 {/* Question Card */}
@@ -418,10 +559,11 @@ export default function ExamSession() {
                     <Button endIcon={<NavigateNext />} onClick={() => setCurrentQ(Math.min(questions.length - 1, currentQ + 1))}
                         disabled={currentQ === questions.length - 1} variant="outlined">Next</Button>
                 </Box>
-            </Box>
+            </Box >
 
             {/* Question Palette */}
-            <Paper sx={{ width: 200, p: 2, flexShrink: 0, overflow: 'auto' }}>
+            < Paper sx={{ width: 200, p: 2, flexShrink: 0, overflow: 'auto' }
+            }>
                 <Typography variant="subtitle2" fontWeight={600} gutterBottom>Questions</Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
                     {answeredCount}/{questions.length} answered
@@ -457,10 +599,10 @@ export default function ExamSession() {
                         <Typography variant="caption">Unanswered</Typography>
                     </Box>
                 </Box>
-            </Paper>
+            </Paper >
 
             {/* Submit Confirmation */}
-            <Dialog open={confirmSubmit} onClose={() => setConfirmSubmit(false)}>
+            < Dialog open={confirmSubmit} onClose={() => setConfirmSubmit(false)}>
                 <DialogTitle>Submit Exam?</DialogTitle>
                 <DialogContent>
                     <Typography gutterBottom>Are you sure you want to submit?</Typography>
@@ -479,10 +621,10 @@ export default function ExamSession() {
                         {submitting ? 'Submitting...' : 'Confirm Submit'}
                     </Button>
                 </DialogActions>
-            </Dialog>
+            </Dialog >
 
             {/* Admin Override Panel */}
-            <AdminOverridePanel
+            < AdminOverridePanel
                 open={overrideOpen}
                 onClose={(modules) => {
                     setOverrideOpen(false);
@@ -494,22 +636,48 @@ export default function ExamSession() {
             />
 
             {/* Proctoring Monitors */}
-            {!submitted && !disabledModules.includes('identity') && (
-                <IdentityMonitor active={!submitted} onStatusChange={logFlag} />
-            )}
-            {!submitted && !disabledModules.includes('device') && (
-                <DeviceMonitor active={!submitted} onFlag={logFlag} />
-            )}
-            {!submitted && !disabledModules.includes('behavior') && (
-                <BehaviorMonitor active={!submitted} onFlag={logFlag} />
-            )}
-            {!submitted && !disabledModules.includes('audio') && (
-                <AudioMonitor active={!submitted} onFlag={logFlag} />
-            )}
-            {!submitted && !disabledModules.includes('network') && (
-                <NetworkMonitor active={!submitted} onFlag={logFlag} />
-            )}
-        </Box>
+            {
+                !submitted && !disabledModules.includes('identity') && (
+                    <IdentityMonitor active={!submitted} onStatusChange={logFlag} />
+                )
+            }
+            {
+                !submitted && !disabledModules.includes('device') && (
+                    <DeviceMonitor active={!submitted} onFlag={logFlag} />
+                )
+            }
+            {
+                !submitted && !disabledModules.includes('behavior') && (
+                    <VisionBehaviorMonitor active={!submitted} onFlag={logFlag} />
+                )
+            }
+            {
+                !submitted && !disabledModules.includes('audio') && (
+                    <AudioIntelligence active={!submitted} onFlag={logFlag} />
+                )
+            }
+            {
+                !submitted && !disabledModules.includes('network') && (
+                    <NetworkMonitor active={!submitted} onFlag={logFlag} />
+                )
+            }
+            {
+                !submitted && !disabledModules.includes('object_detection') && cameraStream && (
+                    <ObjectDetection active={!submitted} stream={cameraStream} onFlag={logFlag} />
+                )
+            }
+
+            <Snackbar
+                open={warningOpen}
+                autoHideDuration={6000}
+                onClose={() => setWarningOpen(false)}
+                anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+            >
+                <Alert onClose={() => setWarningOpen(false)} severity="warning" sx={{ width: '100%' }}>
+                    {warningMsg}
+                </Alert>
+            </Snackbar>
+        </Box >
     );
 }
 

@@ -9,7 +9,11 @@ import {
 } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../store/authStore';
+import AdminAuthDialog from '../../components/AdminAuthDialog';
+
 import { useNavigate } from 'react-router-dom';
+
+// ... (imports)
 
 export default function StudentDashboard() {
     const navigate = useNavigate();
@@ -19,74 +23,95 @@ export default function StudentDashboard() {
     const [flagCount, setFlagCount] = useState(0);
     const [faceRegistered, setFaceRegistered] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [adminAuthOpen, setAdminAuthOpen] = useState(false);
 
     useEffect(() => {
-        loadData();
-    }, []);
+        if (user) {
+            loadData();
+        }
+    }, [user]);
 
     const loadData = async () => {
         try {
-            // Get enrolled courses and their upcoming tests
+            // 1. Check Face Registration
+            const { data: faceReg } = await supabase
+                .from('face_registrations')
+                .select('id')
+                .eq('user_id', user.id)
+                .single();
+            setFaceRegistered(!!faceReg);
+
+            // 2. Get Enrollments & Upcoming Tests
             const { data: enrollments } = await supabase
                 .from('enrollments')
-                .select('course_id, courses(id, name, code)')
+                .select('course_id')
                 .eq('student_id', user.id);
 
             const courseIds = enrollments?.map(e => e.course_id) || [];
 
             if (courseIds.length > 0) {
-                // Upcoming exams
-                const { data: exams } = await supabase
+                const { data: tests } = await supabase
                     .from('tests')
-                    .select('*, courses(name)')
+                    .select(`
+                        id, title, start_time, duration_minutes,
+                        courses (name, code)
+                    `)
                     .in('course_id', courseIds)
-                    .gte('end_time', new Date().toISOString())
-                    .order('start_time', { ascending: true })
-                    .limit(5);
-
-                setUpcomingExams(exams || []);
+                    .gt('start_time', new Date().toISOString())
+                    .order('start_time', { ascending: true });
+                setUpcomingExams(tests || []);
             }
 
-            // Past results
-            const { data: sessions } = await supabase
+            // 3. Get Past Results
+            const { data: results } = await supabase
                 .from('exam_sessions')
-                .select('*, tests(title, total_marks)')
+                .select(`
+                    id, score, status, ended_at,
+                    tests (title, total_marks)
+                `)
                 .eq('student_id', user.id)
-                .in('status', ['completed', 'submitted'])
-                .order('ended_at', { ascending: false })
-                .limit(5);
+                .in('status', ['completed', 'invalidated'])
+                .order('ended_at', { ascending: false });
+            setPastResults(results || []);
 
-            setPastResults(sessions || []);
-
-            // Flag count
-            const { data: studentSessions } = await supabase
-                .from('exam_sessions')
-                .select('id')
+            // 4. Get Flags Count
+            const { count } = await supabase
+                .from('flags')
+                .select('*', { count: 'exact', head: true })
                 .eq('student_id', user.id);
+            setFlagCount(count || 0);
 
-            if (studentSessions?.length > 0) {
-                const sessionIds = studentSessions.map(s => s.id);
-                const { count } = await supabase
-                    .from('flags')
-                    .select('id', { count: 'exact', head: true })
-                    .in('session_id', sessionIds);
-                setFlagCount(count || 0);
-            }
-
-            // Check face registration
-            const { data: face } = await supabase
-                .from('face_registrations')
-                .select('id')
-                .eq('user_id', user.id)
-                .single();
-            setFaceRegistered(!!face);
-        } catch (err) {
-            console.error('Failed to load student data:', err);
+        } catch (error) {
+            console.error('Error loading dashboard:', error);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
+    };
+
+    const handleFaceIdUpdate = () => {
+        setAdminAuthOpen(true);
+    };
+
+    const handleAdminSuccess = async () => {
+        try {
+            // Delete existing registration
+            const { error } = await supabase
+                .from('face_registrations')
+                .delete()
+                .eq('user_id', user.id);
+
+            if (error) throw error;
+
+            // Redirect to re-register
+            navigate('/dashboard/face-registration');
+        } catch (err) {
+            console.error('Failed to reset face ID:', err);
+            // Optionally show error snackbar
+        }
     };
 
     const isExamReady = (test) => {
+        // ... (existing logic)
         const now = new Date();
         const start = new Date(test.start_time);
         const diff = (start - now) / 60000; // minutes
@@ -97,22 +122,31 @@ export default function StudentDashboard() {
 
     return (
         <Box>
+            <AdminAuthDialog
+                open={adminAuthOpen}
+                onClose={() => setAdminAuthOpen(false)}
+                onSuccess={handleAdminSuccess}
+                title="Reset Face ID Verification"
+            />
             <Box sx={{ mb: 4 }}>
                 <Typography variant="h4" fontWeight={700} gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                     Welcome back, {user.full_name || user.username?.split('@')[0]} 👋
                     <Chip
                         icon={faceRegistered ? <CheckCircle /> : <Warning />}
-                        label={faceRegistered ? "Face ID Active" : "Face ID Pending"}
+                        label={faceRegistered ? "Face ID Active (Click to Reset)" : "Face ID Pending"} // Updated Label
                         color={faceRegistered ? "success" : "warning"}
                         variant="outlined"
-                        onClick={() => !faceRegistered && navigate('/dashboard/face-registration')}
-                        sx={{ cursor: !faceRegistered ? 'pointer' : 'default' }}
+                        // If registered, open Admin Dialog. If not, go to registration directly.
+                        onClick={() => faceRegistered ? handleFaceIdUpdate() : navigate('/dashboard/face-registration')}
+                        sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' } }}
                     />
                 </Typography>
                 <Typography color="text.secondary">
                     View your upcoming exams, past results, and profile
                 </Typography>
             </Box>
+
+            {/* ... Rest of UI ... */}
 
             <Grid container spacing={3}>
                 {/* Upcoming Exams */}
@@ -210,22 +244,32 @@ export default function StudentDashboard() {
                                                 onClick={() => navigate(`/dashboard/results/${result.id}`)}
                                                 sx={{
                                                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                                    p: 1.5, mb: 1, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.02)',
+                                                    p: 1.5, mb: 1, borderRadius: 2,
+                                                    bgcolor: result.status === 'invalidated' ? 'rgba(255, 77, 106, 0.05)' : 'rgba(255,255,255,0.02)',
                                                     cursor: 'pointer', transition: 'all 0.2s',
                                                     '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
                                                 }}>
                                                 <Box>
-                                                    <Typography variant="body2" fontWeight={600}>
-                                                        {result.tests?.title || 'Unknown Test'}
-                                                    </Typography>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <Typography variant="body2" fontWeight={600}>
+                                                            {result.tests?.title || 'Unknown Test'}
+                                                        </Typography>
+                                                        {result.status === 'invalidated' && (
+                                                            <Chip label="INVALIDATED" size="small" color="error" sx={{ height: 16, fontSize: 9 }} />
+                                                        )}
+                                                    </Box>
                                                     <Typography variant="caption" color="text.secondary">
                                                         {result.ended_at ? new Date(result.ended_at).toLocaleDateString() : '—'}
                                                     </Typography>
                                                 </Box>
-                                                <Chip
-                                                    label={`${result.score || 0}/${result.tests?.total_marks || 0}`}
-                                                    size="small" color="primary" variant="outlined"
-                                                />
+                                                {result.status === 'invalidated' ? (
+                                                    <Typography variant="body2" fontWeight={700} color="error">VOID</Typography>
+                                                ) : (
+                                                    <Chip
+                                                        label={`${result.score || 0}/${result.tests?.total_marks || 0}`}
+                                                        size="small" color="primary" variant="outlined"
+                                                    />
+                                                )}
                                             </Box>
                                         ))
                                     )}

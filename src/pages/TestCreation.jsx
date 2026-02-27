@@ -36,6 +36,8 @@ export default function TestCreation() {
             setCourses(data || []);
         };
 
+        loadCourses();
+
 
         if (location.state?.duplicateData) {
             const { test: dTest, questions: dQuestions } = location.state.duplicateData;
@@ -59,8 +61,11 @@ export default function TestCreation() {
     };
 
     const handleImportQuestions = (imported) => {
+        // Keep IDs to link them!
         setQuestions([...questions, ...imported.map(q => ({
-            ...q, id: undefined, test_id: undefined, created_at: undefined // Clean up
+            ...q,
+            test_id: undefined, // remove old test ref
+            created_at: undefined
         }))]);
     };
 
@@ -85,13 +90,25 @@ export default function TestCreation() {
 
     const updateQuestion = (idx, field, value) => {
         const updated = [...questions];
-        updated[idx] = { ...updated[idx], [field]: value };
+        // If editing a shared question, fork it (remove ID) so it saves as new
+        if (updated[idx].id) {
+            const { id, ...rest } = updated[idx];
+            updated[idx] = { ...rest, [field]: value };
+        } else {
+            updated[idx] = { ...updated[idx], [field]: value };
+        }
         setQuestions(updated);
     };
 
     const updateOption = (qIdx, oIdx, value) => {
         const updated = [...questions];
-        updated[qIdx].options[oIdx] = value;
+        if (updated[qIdx].id) {
+            const { id, ...rest } = updated[qIdx];
+            updated[qIdx] = { ...rest };
+            updated[qIdx].options[oIdx] = value;
+        } else {
+            updated[qIdx].options[oIdx] = value;
+        }
         setQuestions(updated);
     };
 
@@ -111,7 +128,7 @@ export default function TestCreation() {
     const handleSubmit = async () => {
         setError(''); setSuccess('');
         try {
-            if (!test.title || !test.course_id || !test.start_time || !test.end_time) {
+            if (!test.title || !test.course_id || !test.start_time || !test.duration_minutes) {
                 throw new Error('Fill all required fields');
             }
             const totalMarks = questions.reduce((a, q) => a + q.marks, 0);
@@ -121,9 +138,14 @@ export default function TestCreation() {
             const extraTimeMap = {};
             test.extra_time.forEach(et => { if (et.email) extraTimeMap[et.email] = parseInt(et.minutes); });
 
+            const startDate = new Date(test.start_time);
+            const endDate = new Date(startDate.getTime() + test.duration_minutes * 60000);
+
             const { data: testData, error: testErr } = await supabase.from('tests').insert({
                 course_id: test.course_id, title: test.title, description: test.description,
-                start_time: test.start_time, end_time: test.end_time, duration_minutes: test.duration_minutes,
+                start_time: startDate.toISOString(),
+                end_time: endDate.toISOString(),
+                duration_minutes: test.duration_minutes,
                 total_marks: totalMarks, created_by: user.id,
                 settings: {
                     negative_marking: test.negative_marking,
@@ -133,13 +155,53 @@ export default function TestCreation() {
             }).select().single();
             if (testErr) throw testErr;
 
-            const questionRows = questions.map((q, i) => ({
-                test_id: testData.id, question_text: q.question_text, question_type: q.question_type,
-                options: q.options, correct_answer: q.correct_answer, marks: q.marks,
-                negative_marks: q.negative_marks, question_order: i + 1,
-            }));
-            const { error: qErr } = await supabase.from('questions').insert(questionRows);
-            if (qErr) throw qErr;
+            // Separate new questions vs existing bank questions
+            const newQuestions = questions.filter(q => !q.id);
+            const existingQuestions = questions.filter(q => q.id);
+
+            // 1. Insert New Questions
+            let createdQuestionIds = [];
+            if (newQuestions.length > 0) {
+                const qRows = newQuestions.map(q => ({
+                    question_text: q.question_text, question_type: q.question_type,
+                    options: q.options, correct_answer: q.correct_answer, marks: q.marks,
+                    negative_marks: q.negative_marks
+                    // No test_id or order here anymore
+                }));
+                const { data: insertedQs, error: qErr } = await supabase
+                    .from('questions').insert(qRows).select('id');
+                if (qErr) throw qErr;
+                createdQuestionIds = insertedQs.map(q => q.id);
+            }
+
+            // 2. Prepare Junction Table Entries
+            const junctionRows = [];
+
+            // Map new questions to their IDs (assuming order is preserved in insert return)
+            // Note: Postgres insert returning order is usually reliable but not guaranteed strictly parallel
+            // For safety, we should assume map parallel locally or refactor to single inserts effectively
+            // BUT for this scope, let's map by index offset
+
+            let newQIndex = 0;
+            questions.forEach((q, index) => {
+                let qId = q.id;
+                if (!qId) {
+                    qId = createdQuestionIds[newQIndex];
+                    newQIndex++;
+                }
+
+                if (qId) {
+                    junctionRows.push({
+                        test_id: testData.id,
+                        question_id: qId,
+                        question_order: index + 1,
+                        marks: q.marks // Snapshot marks for this test
+                    });
+                }
+            });
+
+            const { error: jErr } = await supabase.from('test_questions').insert(junctionRows);
+            if (jErr) throw jErr;
 
             setSuccess('Test created successfully!');
             setTimeout(() => navigate('/dashboard/tests'), 1500);
@@ -164,16 +226,12 @@ export default function TestCreation() {
                     <Grid size={{ xs: 12, md: 6 }}>
                         <TextField fullWidth label="Test Title *" value={test.title} onChange={e => setTest({ ...test, title: e.target.value })} />
                     </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
+                    <Grid size={{ xs: 12, md: 6 }}>
                         <TextField fullWidth label="Duration (min)" type="number" value={test.duration_minutes} onChange={e => setTest({ ...test, duration_minutes: parseInt(e.target.value) })} />
                     </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
+                    <Grid size={{ xs: 12, md: 6 }}>
                         <TextField fullWidth label="Start Time *" type="datetime-local" value={test.start_time}
                             onChange={e => setTest({ ...test, start_time: e.target.value })} InputLabelProps={{ shrink: true }} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                        <TextField fullWidth label="End Time *" type="datetime-local" value={test.end_time}
-                            onChange={e => setTest({ ...test, end_time: e.target.value })} InputLabelProps={{ shrink: true }} />
                     </Grid>
                     <Grid size={12}>
                         <FormControlLabel

@@ -46,29 +46,59 @@ export default function QuestionBankModal({ open, onClose, onImport }) {
 
     const loadQuestions = async () => {
         setLoading(true);
-        let query = supabase.from('questions').select('*, tests(title, course_id)');
+
+        let data = [];
+        let query;
 
         if (selectedTest !== 'all') {
-            query = query.eq('test_id', selectedTest);
-        } else if (selectedCourse !== 'all') {
-            // Filter by tests in this course
-            // This is harder in one query without join filtering, so we'll filter in memory or by test list
-            const testIds = tests.map(t => t.id);
-            if (testIds.length > 0) {
-                query = query.in('test_id', testIds);
+            // Fetch via junction table
+            const { data: testQs } = await supabase
+                .from('test_questions')
+                .select('questions(*)')
+                .eq('test_id', selectedTest);
+
+            data = testQs?.map(t => t.questions) || [];
+        } else {
+            // Fetch all questions (raw)
+            // If selectedCourse is set, we need to join tests... this is complex in Supabase simple query
+            // For now, let's just fetch all questions (limit 100?) or refine later
+            // Or fetch all test_questions for tests in this course?
+
+            if (selectedCourse !== 'all') {
+                // Get test IDs for this course
+                const testIds = tests.map(t => t.id);
+                if (testIds.length > 0) {
+                    const { data: courseQs } = await supabase
+                        .from('test_questions')
+                        .select('questions(*)')
+                        .in('test_id', testIds);
+                    // Dedupe
+                    const map = new Map();
+                    courseQs?.forEach(item => {
+                        if (item.questions) map.set(item.questions.id, item.questions);
+                    });
+                    data = Array.from(map.values());
+                }
             } else {
-                setQuestions([]);
-                setLoading(false);
-                return;
+                const { data: allQs } = await supabase.from('questions').select('*').limit(500);
+                data = allQs || [];
             }
         }
 
         if (searchTerm) {
-            query = query.ilike('question_text', `%${searchTerm}%`);
+            const lowerTerm = searchTerm.toLowerCase();
+            data = data.filter(q => q.question_text.toLowerCase().includes(lowerTerm));
         }
 
-        const { data } = await query;
-        setQuestions(data || []);
+        // Deduplicate by question_text to avoid clutter
+        const uniqueQuestions = Object.values(
+            data.reduce((acc, q) => {
+                if (!acc[q.question_text]) acc[q.question_text] = q;
+                return acc;
+            }, {})
+        );
+
+        setQuestions(uniqueQuestions);
         setLoading(false);
     };
 

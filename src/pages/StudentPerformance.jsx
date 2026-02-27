@@ -169,10 +169,13 @@ export default function StudentPerformance() {
                                     return (
                                         <TableRow key={s.id} hover
                                             onClick={() => navigate(`/dashboard/results/${s.id}`)}
-                                            sx={{ cursor: 'pointer' }}>
+                                            sx={{ cursor: 'pointer', bgcolor: s.status === 'invalidated' ? 'rgba(255, 77, 106, 0.05)' : 'inherit' }}>
                                             <TableCell>
                                                 <Typography variant="body2" fontWeight={600}>{s.tests?.title}</Typography>
                                                 <Typography variant="caption" color="text.secondary">{s.tests?.duration_minutes} min</Typography>
+                                                {s.status === 'invalidated' && (
+                                                    <Chip label="INVALIDATED" size="small" color="error" sx={{ ml: 1, height: 20, fontSize: 10 }} />
+                                                )}
                                             </TableCell>
                                             <TableCell>{s.tests?.courses?.name || '—'}</TableCell>
                                             <TableCell>
@@ -182,16 +185,24 @@ export default function StudentPerformance() {
                                                 </Typography>
                                             </TableCell>
                                             <TableCell>
-                                                <Typography variant="body2" fontWeight={700} sx={{ color: getScoreColor(s.score || 0, s.tests?.total_marks || 1) }}>
-                                                    {s.score || 0} / {s.tests?.total_marks || 0}
-                                                </Typography>
+                                                {s.status === 'invalidated' ? (
+                                                    <Typography variant="body2" fontWeight={700} color="error">VOID</Typography>
+                                                ) : (
+                                                    <Typography variant="body2" fontWeight={700} sx={{ color: getScoreColor(s.score || 0, s.tests?.total_marks || 1) }}>
+                                                        {s.score || 0} / {s.tests?.total_marks || 0}
+                                                    </Typography>
+                                                )}
                                             </TableCell>
                                             <TableCell>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <LinearProgress variant="determinate" value={pct}
-                                                        sx={{ width: 60, height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { bgcolor: getScoreColor(s.score || 0, s.tests?.total_marks || 1) } }} />
-                                                    <Typography variant="body2" fontWeight={600}>{pct}%</Typography>
-                                                </Box>
+                                                {s.status === 'invalidated' ? (
+                                                    <Typography variant="body2" fontWeight={600} color="error">—</Typography>
+                                                ) : (
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <LinearProgress variant="determinate" value={pct}
+                                                            sx={{ width: 60, height: 6, borderRadius: 1, '& .MuiLinearProgress-bar': { bgcolor: getScoreColor(s.score || 0, s.tests?.total_marks || 1) } }} />
+                                                        <Typography variant="body2" fontWeight={600}>{pct}%</Typography>
+                                                    </Box>
+                                                )}
                                             </TableCell>
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', gap: 0.5 }}>
