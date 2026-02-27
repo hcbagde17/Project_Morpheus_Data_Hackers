@@ -101,62 +101,110 @@ export default function FlagReview() {
 
     const loadFlags = async () => {
         setLoading(true);
-        if (isTeacher && courses.length === 0) {
-            setFlags([]);
-            setLoading(false);
-            return;
-        }
 
-        // Use left joins (not !inner) so flags are never silently excluded
-        // when a session's test or course has been deleted/modified
-        let query = supabase
-            .from('flags')
-            .select('*, exam_sessions(student_id, test_id, tests(title, course_id))')
-            .order('timestamp', { ascending: false })
-            .limit(100);
+        try {
+            // ── Step 1: For teachers, resolve the session IDs they can see ──────────
+            // Supabase PostgREST cannot filter across two nested join levels like
+            // .in('exam_sessions.tests.course_id', [...]) — it silently returns nothing.
+            // So we manually ressolve session IDs first, then filter flags against them.
+            let allowedSessionIds = null; // null = no restriction (admin path)
 
-        if (isTeacher) {
-            query = query.in('exam_sessions.tests.course_id', courses.map(c => c.id));
-        }
+            if (isTeacher) {
+                if (courses.length === 0) {
+                    setFlags([]);
+                    setLoading(false);
+                    return;
+                }
 
-        if (selectedTest !== 'all') {
-            query = query.eq('exam_sessions.test_id', selectedTest);
-        } else if (selectedCourse !== 'all') {
-            query = query.eq('exam_sessions.tests.course_id', selectedCourse);
-        }
+                // Get all tests in the teacher's courses
+                const { data: teacherTests } = await supabase
+                    .from('tests')
+                    .select('id')
+                    .in('course_id', courses.map(c => c.id));
 
-        if (filter === 'high') {
-            query = query.in('severity', ['high', 'RED']);
-        } else if (filter === 'medium') {
-            query = query.in('severity', ['medium', 'ORANGE', 'YELLOW']);
-        } else if (filter === 'low') {
-            query = query.in('severity', ['low']);
-        }
+                const testIds = (teacherTests || []).map(t => t.id);
 
-        if (filter === 'escalated') query = query.eq('review_action', 'escalate');
-        if (filter === 'unreviewed') query = query.eq('reviewed', false);
+                if (testIds.length === 0) {
+                    setFlags([]);
+                    setLoading(false);
+                    return;
+                }
 
-        const { data, error } = await query;
-        if (error) {
-            console.error('[FlagReview] ❌ Query failed:', error);
-        } else {
-            console.log(`[FlagReview] ✓ Loaded ${data?.length ?? 0} flags`);
-            const withEvidence = (data || []).filter(f => f.evidence_url);
-            const withoutEvidence = (data || []).filter(f => !f.evidence_url);
-            console.log(`[FlagReview]   → ${withEvidence.length} flags have evidence_url`);
-            console.log(`[FlagReview]   → ${withoutEvidence.length} flags have NO evidence_url`);
-            if (withEvidence.length > 0) {
-                console.log('[FlagReview] Evidence URLs:', withEvidence.map(f => ({
-                    id: f.id,
-                    type: f.flag_type || f.type,
-                    severity: f.severity,
-                    url: f.evidence_url,
-                })));
+                // Get all exam sessions for those tests
+                const { data: teacherSessions } = await supabase
+                    .from('exam_sessions')
+                    .select('id')
+                    .in('test_id', testIds);
+
+                allowedSessionIds = (teacherSessions || []).map(s => s.id);
+
+                if (allowedSessionIds.length === 0) {
+                    setFlags([]);
+                    setLoading(false);
+                    return;
+                }
             }
+
+            // ── Step 2: Build the flags query ────────────────────────────────────────
+            let query = supabase
+                .from('flags')
+                .select(`
+                    *,
+                    exam_sessions (
+                        student_id,
+                        test_id,
+                        tests ( title, course_id )
+                    )
+                `)
+                .order('timestamp', { ascending: false })
+                .limit(200);
+
+            // Teacher restriction: only flags from their sessions
+            if (allowedSessionIds !== null) {
+                query = query.in('session_id', allowedSessionIds);
+            }
+
+            // Test / course filter (dropdown)
+            if (selectedTest !== 'all') {
+                // Filter to flags whose session belongs to this test
+                const { data: testSessions } = await supabase
+                    .from('exam_sessions')
+                    .select('id')
+                    .eq('test_id', selectedTest);
+                const ids = (testSessions || []).map(s => s.id);
+                query = ids.length > 0 ? query.in('session_id', ids) : query.eq('session_id', '00000000-0000-0000-0000-000000000000');
+            } else if (selectedCourse !== 'all') {
+                const { data: courseSessions } = await supabase
+                    .from('exam_sessions')
+                    .select('id, tests!inner(course_id)')
+                    .eq('tests.course_id', selectedCourse);
+                const ids = (courseSessions || []).map(s => s.id);
+                query = ids.length > 0 ? query.in('session_id', ids) : query.eq('session_id', '00000000-0000-0000-0000-000000000000');
+            }
+
+            // Severity filter (chip)
+            if (filter === 'red') query = query.in('severity', ['high', 'RED']);
+            else if (filter === 'orange') query = query.in('severity', ['medium', 'ORANGE', 'YELLOW']);
+            else if (filter === 'escalated') query = query.eq('review_action', 'escalate');
+            else if (filter === 'unreviewed') query = query.eq('reviewed', false);
+
+            const { data, error } = await query;
+
+            if (error) {
+                console.error('[FlagReview] ❌ Query failed:', error);
+                setFlags([]);
+            } else {
+                console.log(`[FlagReview] ✓ Loaded ${data?.length ?? 0} flags`);
+                setFlags(data || []);
+            }
+        } catch (err) {
+            console.error('[FlagReview] ❌ Unexpected error:', err);
+            setFlags([]);
         }
-        setFlags(data || []);
+
         setLoading(false);
     };
+
 
     const handleReview = async () => {
         if (!selectedFlag) return;
@@ -197,8 +245,8 @@ export default function FlagReview() {
 
     // Stats
     const totalFlags = flags.length;
-    const highFlags = flags.filter(f => f.severity === 'high' || f.severity === 'RED').length;
-    const mediumFlags = flags.filter(f => f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW').length;
+    const redFlags = flags.filter(f => f.severity === 'high' || f.severity === 'RED').length;
+    const orangeFlags = flags.filter(f => f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW').length;
     const unreviewedFlags = flags.filter(f => !f.reviewed).length;
 
     if (loading) return <LinearProgress />;
@@ -217,8 +265,8 @@ export default function FlagReview() {
             <Grid container spacing={2} sx={{ mb: 3 }}>
                 {[
                     { label: 'Total Flags', value: totalFlags, color: '#6C63FF' },
-                    { label: 'High Severity', value: highFlags, color: '#FF4D6A' },
-                    { label: 'Medium Severity', value: mediumFlags, color: '#FF9800' },
+                    { label: '🔴 Red Flags', value: redFlags, color: '#FF4D6A' },
+                    { label: '🟠 Orange Flags', value: orangeFlags, color: '#FF9800' },
                     { label: 'Unreviewed', value: unreviewedFlags, color: '#FFC107' },
                 ].map(stat => (
                     <Grid size={{ xs: 6, md: 3 }} key={stat.label}>
@@ -253,9 +301,8 @@ export default function FlagReview() {
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     {[
                         { key: 'all', label: 'All', color: 'default' },
-                        { key: 'high', label: '🔴 High', color: 'error' },
-                        { key: 'medium', label: '🟠 Medium', color: 'warning' },
-                        { key: 'low', label: '🟡 Low', color: 'default' },
+                        { key: 'red', label: '🔴 Red Flag', color: 'error' },
+                        { key: 'orange', label: '🟠 Orange Flag', color: 'warning' },
                         { key: 'unreviewed', label: 'Unreviewed', color: 'info' },
                         { key: 'escalated', label: 'Escalated', color: 'error' },
                     ].map(f => (
@@ -294,7 +341,7 @@ export default function FlagReview() {
                                     hover
                                     sx={{
                                         borderLeft: (f.severity === 'high' || f.severity === 'RED') ? '3px solid #FF4D6A' :
-                                            (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? '3px solid #FF9800' : '3px solid #ccc'
+                                            (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? '3px solid #FF9800' : '3px solid transparent'
                                     }}
                                 >
                                     <TableCell>
@@ -304,7 +351,7 @@ export default function FlagReview() {
                                     </TableCell>
                                     <TableCell>
                                         <Chip
-                                            label={f.severity}
+                                            label={(f.severity === 'high' || f.severity === 'RED') ? '🔴 Red' : (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? '🟠 Orange' : f.severity}
                                             size="small"
                                             color={(f.severity === 'high' || f.severity === 'RED') ? 'error' : (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? 'warning' : 'default'}
                                         />
