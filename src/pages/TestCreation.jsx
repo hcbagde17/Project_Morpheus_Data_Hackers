@@ -28,7 +28,7 @@ export default function TestCreation() {
     const [aiModalOpen, setAiModalOpen] = useState(false);
     const [questions, setQuestions] = useState([{
         question_text: '', question_type: 'MCQ_SINGLE', options: ['', '', '', ''],
-        correct_answer: [], marks: 1, negative_marks: 0,
+        correct_answer: [], marks: 1, negative_marks: -1,
     }]);
 
     useEffect(() => {
@@ -59,7 +59,7 @@ export default function TestCreation() {
     const addQuestion = () => {
         setQuestions([...questions, {
             question_text: '', question_type: 'MCQ_SINGLE', options: ['', '', '', ''],
-            correct_answer: [], marks: 1, negative_marks: 0,
+            correct_answer: [], marks: 1, negative_marks: -1,
         }]);
     };
 
@@ -280,9 +280,20 @@ export default function TestCreation() {
                                 <MenuItem value="MCQ_MULTIPLE">MCQ Multiple</MenuItem>
                             </TextField>
                             <TextField size="small" label="Marks" type="number" value={q.marks} sx={{ width: 80 }}
-                                onChange={e => updateQuestion(qIdx, 'marks', parseInt(e.target.value))} />
+                                inputProps={{ min: test.negative_marking ? 1 : undefined }}
+                                onChange={e => {
+                                    const val = parseInt(e.target.value);
+                                    if (test.negative_marking && val < 0) return;
+                                    updateQuestion(qIdx, 'marks', val);
+                                }} />
                             {test.negative_marking && <TextField size="small" label="-Marks" type="number" value={q.negative_marks}
-                                sx={{ width: 80 }} onChange={e => updateQuestion(qIdx, 'negative_marks', parseInt(e.target.value))} />}
+                                sx={{ width: 80 }}
+                                inputProps={{ max: -1 }}
+                                onChange={e => {
+                                    const val = parseInt(e.target.value);
+                                    if (val > -1) return;
+                                    updateQuestion(qIdx, 'negative_marks', val);
+                                }} />}
                             <IconButton color="error" onClick={() => removeQuestion(qIdx)}><Delete /></IconButton>
                         </Box>
                     </Box>
