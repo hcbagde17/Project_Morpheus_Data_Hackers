@@ -868,6 +868,7 @@ export default function ExamSession() {
                     }
                 }}
                 sessionId={session?.id}
+                studentId={user?.id}
             />
 
             {/* ═══════════════════════════════════════════ */}
