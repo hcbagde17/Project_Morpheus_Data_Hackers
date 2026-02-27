@@ -4,9 +4,10 @@ import { Warning } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../store/authStore';
 
-export default function IdentityMonitor({ active, onStatusChange }) {
+export default function IdentityMonitor({ active, onStatusChange, embeddingOverride, stream: sharedStream, demoMode }) {
     const { user } = useAuthStore();
     const videoRef = useRef(null);
+    const streamRef = useRef(null);
     const [stream, setStream] = useState(null);
     const [registeredEmbedding, setRegisteredEmbedding] = useState(null);
     const [status, setStatus] = useState('initializing'); // initializing, active, warning, error
@@ -14,11 +15,50 @@ export default function IdentityMonitor({ active, onStatusChange }) {
     const lastCheckTime = useRef(0);
     const [debugInfo, setDebugInfo] = useState('');
 
+    // Load embedding (separate from camera lifecycle)
     useEffect(() => {
-        loadRegistration();
-        startCamera();
-        return () => stopCamera();
-    }, []);
+        if (embeddingOverride) {
+            setRegisteredEmbedding(embeddingOverride);
+        } else if (demoMode) {
+            // In demo mode, load from localStorage
+            try {
+                const stored = localStorage.getItem('pw_test_face_embedding');
+                if (stored) {
+                    setRegisteredEmbedding(JSON.parse(stored));
+                    console.log('[IdentityMonitor] Loaded face embedding from localStorage');
+                } else {
+                    console.warn('[IdentityMonitor] No local face embedding found');
+                }
+            } catch (err) {
+                console.error('[IdentityMonitor] Failed to load local embedding:', err);
+            }
+        } else {
+            loadRegistration();
+        }
+    }, [embeddingOverride, demoMode]);
+
+    // Camera lifecycle
+    useEffect(() => {
+        if (sharedStream) {
+            // Use shared stream from parent — don't acquire our own
+            streamRef.current = sharedStream;
+            setStream(sharedStream);
+            setStatus('active');
+        } else {
+            startCamera();
+        }
+        return () => {
+            if (!sharedStream) stopCamera(); // Only stop if we own the stream
+        };
+    }, [sharedStream]);
+
+    // Connect stream to video element whenever either changes
+    useEffect(() => {
+        if (stream && videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => { });
+        }
+    }, [stream]);
 
     const loadRegistration = async () => {
         try {
@@ -30,8 +70,6 @@ export default function IdentityMonitor({ active, onStatusChange }) {
 
             if (error || !data) {
                 console.warn("No face registration found for user");
-                // For prototype, we might want to allow proceeding or halt. 
-                // Let's set a state that skips verification but still does detection.
                 return;
             }
             setRegisteredEmbedding(data.embeddings);
@@ -45,10 +83,8 @@ export default function IdentityMonitor({ active, onStatusChange }) {
             const mediaStream = await navigator.mediaDevices.getUserMedia({
                 video: { width: 320, height: 240, frameRate: 15 }
             });
+            streamRef.current = mediaStream;
             setStream(mediaStream);
-            if (videoRef.current) {
-                videoRef.current.srcObject = mediaStream;
-            }
             setStatus('active');
         } catch (err) {
             console.error(err);
@@ -58,8 +94,9 @@ export default function IdentityMonitor({ active, onStatusChange }) {
     };
 
     const stopCamera = () => {
-        if (stream) {
-            stream.getTracks().forEach(track => track.stop());
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
             setStream(null);
         }
     };
@@ -71,6 +108,10 @@ export default function IdentityMonitor({ active, onStatusChange }) {
         let animationId;
         const CHECK_INTERVAL = 2000; // Check every 2 seconds
 
+        // Initialize missing count ref if not exists
+        const missingCountRef = { current: 0 };
+        const MISSING_THRESHOLD = 3; // Tolerate 3 consecutive checks (approx 6 seconds)
+
         const checkLoop = async (timestamp) => {
             if (timestamp - lastCheckTime.current >= CHECK_INTERVAL) {
                 try {
@@ -81,32 +122,42 @@ export default function IdentityMonitor({ active, onStatusChange }) {
 
                         // 1. Presence Check
                         if (!faces || faces.length === 0) {
-                            handleFlag('MISSING', 'User not detected in frame.', 'high');
-                        }
-                        // 2. Multi-Face Check
-                        else if (faces.length > 1) {
-                            handleFlag('MULTIPLE_FACES', 'Multiple people detected in frame.', 'high');
-                        }
-                        // 3. Identity Check
-                        else {
-                            const face = faces[0];
-                            // Only run recognition if we have a registered embedding
-                            if (registeredEmbedding) {
-                                // Extract embedding only if face quality is decent (basic check via score)
-                                if (face.score > 0.6) {
-                                    const currentEmbedding = await extractEmbedding(videoRef.current);
-                                    const similarity = calculateSimilarity(registeredEmbedding, currentEmbedding);
-
-                                    setDebugInfo(`Match: ${(similarity * 100).toFixed(1)}%`);
-
-                                    if (similarity < 0.4) { // Threshold needs tuning. MobileFaceNet usually 0.4-0.6 depending on implementation
-                                        handleFlag('IMPERSONATION', `Identity verification failed. Match: ${(similarity * 100).toFixed(0)}%`, 'high');
-                                    } else {
-                                        clearFlag();
-                                    }
-                                }
+                            missingCountRef.current++;
+                            if (missingCountRef.current >= MISSING_THRESHOLD) {
+                                handleFlag('MISSING', 'User not detected in frame.', 'high');
                             } else {
-                                clearFlag(); // No registration, just presence check passed
+                                console.log(`Face missing frame ${missingCountRef.current}/${MISSING_THRESHOLD}`);
+                            }
+                        }
+                        else {
+                            missingCountRef.current = 0; // Reset on face found
+
+                            // 2. Multi-Face Check
+                            if (faces.length > 1) {
+                                handleFlag('MULTIPLE_FACES', 'Multiple people detected in frame.', 'high');
+                            }
+                            // 3. Identity Check
+                            else {
+                                const face = faces[0];
+                                // Only run recognition if we have a registered embedding
+                                if (registeredEmbedding) {
+                                    // Extract embedding only if face quality is decent
+                                    // Lowered threshold to 0.4 to tolerate mouth opening/expressions
+                                    if (face.score > 0.4) {
+                                        const currentEmbedding = await extractEmbedding(videoRef.current);
+                                        const similarity = calculateSimilarity(registeredEmbedding, currentEmbedding);
+
+                                        setDebugInfo(`Match: ${(similarity * 100).toFixed(1)}%`);
+
+                                        if (similarity < 0.4) {
+                                            handleFlag('IMPERSONATION', `Identity verification failed. Match: ${(similarity * 100).toFixed(0)}%`, 'high');
+                                        } else {
+                                            clearFlag();
+                                        }
+                                    }
+                                } else {
+                                    clearFlag(); // No registration, just presence check passed
+                                }
                             }
                         }
                     }
@@ -143,7 +194,7 @@ export default function IdentityMonitor({ active, onStatusChange }) {
 
     return (
         <Box sx={{
-            position: 'fixed', bottom: 20, right: 20,
+            position: 'fixed', top: 80, right: 20,
             width: 180, bgcolor: 'background.paper',
             boxShadow: 3, borderRadius: 2, overflow: 'hidden',
             border: status === 'warning' ? '2px solid #ff4d4f' : '1px solid #ddd',

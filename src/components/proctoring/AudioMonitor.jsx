@@ -97,23 +97,29 @@ export default function AudioMonitor({ active, onFlag }) {
         const avgSpeechEnergy = speechEnergy / (speechEndBin - speechStartBin + 1);
 
         // Voice activity: speech band energy high relative to overall
-        const SPEECH_THRESHOLD = 40; // Tunable
+        // Voice activity: speech band energy high relative to overall
+        const SPEECH_THRESHOLD = 60; // Increased threshold to ignore distant noise
         const isSpeech = avgSpeechEnergy > SPEECH_THRESHOLD;
 
         if (isSpeech) {
             speechFrameCount.current++;
             silenceFrameCount.current = 0;
 
-            // Sustained speech: 6 consecutive frames = ~3 seconds
-            if (speechFrameCount.current >= 6) {
-                emitFlag('SPEECH_DETECTED', 'Sustained speech detected from student microphone.', 'medium');
+            if (speechFrameCount.current >= 6) { // Reduced from 10 (~3 sec)
+                emitFlag('SPEECH_DETECTED', 'Sustained speech detected.', 'medium');
+                speechFrameCount.current = 0;
+            }
+
+            // Quick yell detection (high energy in speech band)
+            if (avgSpeechEnergy > 90) {
+                emitFlag('LOUD_NOISE', 'Loud noise or yelling detected.', 'medium');
                 speechFrameCount.current = 0;
             }
 
             // Whisper detection: moderate energy in speech band
-            if (avgSpeechEnergy > 20 && avgSpeechEnergy < 35) {
+            if (avgSpeechEnergy > 20 && avgSpeechEnergy < 40) { // Lowered floor
                 speechFrameCount.current++; // Weight whispers more
-                if (speechFrameCount.current >= 8) {
+                if (speechFrameCount.current >= 12) {
                     emitFlag('WHISPER_DETECTED', 'Possible whispering detected.', 'medium');
                     speechFrameCount.current = 0;
                 }
@@ -123,10 +129,10 @@ export default function AudioMonitor({ active, onFlag }) {
             speechFrameCount.current = Math.max(0, speechFrameCount.current - 1);
         }
 
-        // Background noise anomaly: high RMS but low speech energy
-        if (rms > 80 && avgSpeechEnergy < 15) {
-            emitFlag('BACKGROUND_NOISE', 'Unusual background noise pattern detected.', 'low');
-        }
+        // Background noise anomaly: Disabled as per request to avoid false positives
+        // if (rms > 80 && avgSpeechEnergy < 15) {
+        //     emitFlag('BACKGROUND_NOISE', 'Unusual background noise pattern detected.', 'low');
+        // }
     };
 
     // Headless component

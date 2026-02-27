@@ -48,7 +48,7 @@ export class EvidenceCapture {
 
         this.recorder.start(CHUNK_INTERVAL_MS);
         this.isRecording = true;
-        console.log('EvidenceCapture: Recording started');
+        console.log('EvidenceCapture: Recording started', { mimeType, streamId: stream.id });
     }
 
     /**
@@ -145,7 +145,11 @@ export class EvidenceCapture {
                 console.log('EvidenceCapture: Uploaded', item.fileName);
                 this.uploadQueue.shift(); // Remove from queue on success
             } catch (err) {
-                console.error('EvidenceCapture: Upload failed, will retry', err);
+                console.error('EvidenceCapture: Upload failed', {
+                    fileName: item.fileName,
+                    error: err.message,
+                    details: err
+                });
                 // Move to end of queue for retry
                 this.uploadQueue.push(this.uploadQueue.shift());
                 // Wait before retrying

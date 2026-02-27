@@ -15,11 +15,13 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
     const [password, setPassword] = useState('');
     const [reason, setReason] = useState('');
     const [modules, setModules] = useState({
-        video: false,
-        audio: false,
-        network: false,
-        device: false,
-        behavior: false,
+        identity: true,
+        device: true,
+        behavior: true,
+        audio: true,
+        network: true,
+        object_detection: true,
+        enforcement: true, // New: System Enforcement
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -50,7 +52,8 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
         setLoading(true);
         setError('');
         try {
-            const disabledModules = Object.keys(modules).filter(k => modules[k]);
+            // Logic Inversion: If module is FALSE (unchecked), it is DISABLED.
+            const disabledModules = Object.keys(modules).filter(k => !modules[k]);
 
             // Get current admin user
             const { data: adminUser } = await supabase
@@ -81,7 +84,10 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
             setUsername('');
             setPassword('');
             setReason('');
-            setModules({ video: false, audio: false, network: false, device: false, behavior: false });
+            setModules({
+                identity: true, device: true, behavior: true, audio: true,
+                network: true, object_detection: true, enforcement: true
+            });
             onClose(disabledModules); // Pass disabled modules back
         } catch (err) {
             setError(err.message);
@@ -95,7 +101,10 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
         setPassword('');
         setReason('');
         setError('');
-        setModules({ video: false, audio: false, network: false, device: false, behavior: false });
+        setModules({
+            identity: true, device: true, behavior: true, audio: true,
+            network: true, object_detection: true, enforcement: true
+        });
         onClose();
     };
 
@@ -103,7 +112,7 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
         <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
             <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'rgba(255,77,106,0.1)' }}>
                 <AdminPanelSettings sx={{ color: '#FF4D6A' }} />
-                <Typography variant="h6" fontWeight={700}>Live Admin Override</Typography>
+                <Typography component="span" variant="subtitle1" fontWeight={700}>Live Admin Override</Typography>
             </DialogTitle>
 
             <DialogContent sx={{ mt: 2 }}>
@@ -137,7 +146,7 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
                 ) : (
                     <Box>
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Select modules to disable for this exam session:
+                            Uncheck modules to DISABLE them for this session:
                         </Typography>
 
                         <Box sx={{ bgcolor: 'rgba(148,163,184,0.04)', p: 2, borderRadius: 2, mb: 2 }}>
@@ -148,12 +157,16 @@ export default function AdminOverridePanel({ open, onClose, sessionId }) {
                                         <Switch
                                             checked={modules[module]}
                                             onChange={e => setModules({ ...modules, [module]: e.target.checked })}
-                                            color="warning"
+                                            color="success" // Green for Active
                                         />
                                     }
                                     label={
-                                        <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                                            {module} Monitor
+                                        <Typography variant="body2" sx={{
+                                            textTransform: 'capitalize',
+                                            color: modules[module] ? 'text.primary' : 'text.disabled',
+                                            textDecoration: modules[module] ? 'none' : 'line-through'
+                                        }}>
+                                            {module.replace('_', ' ')} Monitor {modules[module] ? '(Active)' : '(Disabled)'}
                                         </Typography>
                                     }
                                     sx={{ display: 'block', mb: 0.5 }}

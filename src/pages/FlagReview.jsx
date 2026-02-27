@@ -11,7 +11,12 @@ import {
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
 
+import useAuthStore from '../store/authStore';
+
 export default function FlagReview() {
+    const { user } = useAuthStore();
+    const isAdmin = user?.role === 'admin';
+    const isTeacher = user?.role === 'teacher';
     const [flags, setFlags] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all');
@@ -33,6 +38,15 @@ export default function FlagReview() {
         if (filter === 'high' || filter === 'medium' || filter === 'low') {
             query = query.eq('severity', filter);
         }
+
+        // Role-based filtering
+        // Role-based filtering
+        if (isAdmin) {
+            // Admin default view: Strictly only Escalated flags
+            if (filter === 'all') query = query.eq('review_action', 'escalate');
+        }
+
+        if (filter === 'escalated') query = query.eq('review_action', 'escalate');
         if (filter === 'unreviewed') query = query.eq('reviewed', false);
 
         const { data } = await query;
@@ -42,11 +56,33 @@ export default function FlagReview() {
 
     const handleReview = async () => {
         if (!selectedFlag) return;
+
+        // Update flag status
         await supabase.from('flags').update({
             reviewed: true,
             review_action: reviewAction,
             review_notes: reviewNotes,
         }).eq('id', selectedFlag.id);
+
+        // Handle Exam Invalidation
+        if (reviewAction === 'invalidate' && isAdmin) {
+            await supabase.from('exam_sessions').update({
+                status: 'invalidated',
+                score: 0,
+                ended_at: new Date().toISOString()
+            }).eq('id', selectedFlag.session_id);
+
+            // Create audit log
+            await supabase.from('audit_logs').insert({
+                action: 'EXAM_INVALIDATED',
+                user_id: user.id,
+                details: {
+                    session_id: selectedFlag.session_id,
+                    reason: reviewNotes,
+                    flag_id: selectedFlag.id
+                }
+            });
+        }
 
         setReviewOpen(false);
         setSelectedFlag(null);
@@ -97,7 +133,9 @@ export default function FlagReview() {
                     { key: 'high', label: '🔴 High', color: 'error' },
                     { key: 'medium', label: '🟠 Medium', color: 'warning' },
                     { key: 'low', label: '🟡 Low', color: 'default' },
+                    { key: 'low', label: '🟡 Low', color: 'default' },
                     { key: 'unreviewed', label: 'Unreviewed', color: 'info' },
+                    { key: 'escalated', label: 'Escalated', color: 'error' },
                 ].map(f => (
                     <Chip
                         key={f.key}
@@ -230,7 +268,7 @@ export default function FlagReview() {
                     </Paper>
 
                     {/* Evidence Video */}
-                    {selectedFlag?.evidence_url && (
+                    {selectedFlag?.evidence_url ? (
                         <Box sx={{ mb: 2 }}>
                             <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 <Videocam fontSize="small" /> Evidence Video
@@ -243,9 +281,14 @@ export default function FlagReview() {
                                 />
                             </Box>
                         </Box>
+                    ) : (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            No video evidence available for this flag.
+                        </Alert>
                     )}
 
-                    {!selectedFlag?.reviewed && (
+                    {/* Show form if unreviewed OR if it's an escalated flag viewed by Admin */}
+                    {(!selectedFlag?.reviewed || (isAdmin && selectedFlag?.review_action === 'escalate')) && (
                         <>
                             <TextField
                                 fullWidth
@@ -257,8 +300,8 @@ export default function FlagReview() {
                             >
                                 <MenuItem value="dismiss">Dismiss — No Action</MenuItem>
                                 <MenuItem value="warn">Warn Student</MenuItem>
-                                <MenuItem value="invalidate">Invalidate Exam</MenuItem>
-                                <MenuItem value="escalate">Escalate to Admin</MenuItem>
+                                {isAdmin && <MenuItem value="invalidate">Invalidate Exam (Zero Score)</MenuItem>}
+                                {!isAdmin && <MenuItem value="escalate">Escalate to Admin</MenuItem>}
                             </TextField>
                             <TextField
                                 fullWidth
@@ -272,16 +315,25 @@ export default function FlagReview() {
                         </>
                     )}
 
-                    {selectedFlag?.reviewed && (
+                    {selectedFlag?.reviewed && selectedFlag?.review_action !== 'escalate' && (
                         <Alert severity="success" sx={{ mt: 2 }}>
                             <strong>Reviewed</strong> — Action: {selectedFlag.review_action || 'N/A'}
                             {selectedFlag.review_notes && <Typography variant="body2" sx={{ mt: 1 }}>{selectedFlag.review_notes}</Typography>}
                         </Alert>
                     )}
+
+                    {/* Show info for Escalated flags if Admin is viewing (before they act) */}
+                    {selectedFlag?.review_action === 'escalate' && (
+                        <Alert severity="warning" sx={{ mt: 2, mb: 2 }}>
+                            <strong>Escalated by Teacher</strong>
+                            {selectedFlag.review_notes && <Typography variant="body2" sx={{ mt: 1 }}>Teacher Notes: {selectedFlag.review_notes}</Typography>}
+                        </Alert>
+                    )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setReviewOpen(false)}>Close</Button>
-                    {!selectedFlag?.reviewed && (
+                    <Button onClick={() => setReviewOpen(false)}>Close</Button>
+                    {(!selectedFlag?.reviewed || (isAdmin && selectedFlag?.review_action === 'escalate')) && (
                         <Button variant="contained" onClick={handleReview} disabled={!reviewAction}>
                             Submit Review
                         </Button>

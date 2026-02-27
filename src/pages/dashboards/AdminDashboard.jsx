@@ -7,7 +7,7 @@ import {
 import {
     People, School, Assignment, Flag, TrendingUp,
     Warning, CheckCircle, PersonAdd, Upload,
-    Visibility, Block, PlayArrow,
+    Visibility, Block, PlayArrow, Shield,
 } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -129,6 +129,10 @@ export default function AdminDashboard() {
                                 <Button variant="outlined" startIcon={<Flag />} color="warning"
                                     onClick={() => navigate('/dashboard/flags')}>
                                     Review Flags
+                                </Button>
+                                <Button variant="outlined" startIcon={<Shield />} color="error"
+                                    onClick={() => navigate('/dashboard/blacklist')}>
+                                    Manage Blacklist
                                 </Button>
                             </Box>
                         </CardContent>

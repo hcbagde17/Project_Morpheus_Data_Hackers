@@ -111,13 +111,14 @@ export default function BehaviorMonitor({ active, onFlag }) {
         // =============================
         // 2. Gaze / Looking Away Detection
         // =============================
-        if (yawEstimate > 0.35) {
+        // Lowered thresholds for better sensitivity
+        if (yawEstimate > 0.20) {
             gazeViolationCount.current++;
             if (gazeViolationCount.current >= 3) { // 3 consecutive detections (~4.5 secs)
                 emitFlag('LOOKING_AWAY', `Head turned significantly (yaw: ${(yawEstimate * 100).toFixed(0)}%).`, 'medium');
                 gazeViolationCount.current = 0;
             }
-        } else if (pitchEstimate > 0.3) {
+        } else if (pitchEstimate > 0.20) {
             gazeViolationCount.current++;
             if (gazeViolationCount.current >= 3) {
                 emitFlag('LOOKING_DOWN', `Head tilted down significantly (pitch: ${(pitchEstimate * 100).toFixed(0)}%).`, 'medium');
@@ -128,32 +129,48 @@ export default function BehaviorMonitor({ active, onFlag }) {
         }
 
         // =============================
-        // 3. Lip Movement Detection (basic)
+        // 3. Lip Movement / Mouth Open Detection
         // =============================
-        // With 5-point landmarks, we can estimate mouth openness from the distance
-        // between leftMouth and rightMouth vs eye distance (normalization).
         const eyeDistance = Math.hypot(rightEye[0] - leftEye[0], rightEye[1] - leftEye[1]);
         const mouthWidth = Math.hypot(rightMouth[0] - leftMouth[0], rightMouth[1] - leftMouth[1]);
         const mouthToNoseY = Math.abs(((leftMouth[1] + rightMouth[1]) / 2) - nose[1]);
 
-        // mouthWidth / eyeDistance ratio: normal ~0.6–0.8. If mouth is wider or if 
-        // vertical distance changes significantly, it suggests talking.
-        // This is a very rough heuristic with only 5 landmarks (no inner lip points).
-        // For better results, we'd need FaceMesh (468 landmarks).
-        const mouthRatio = mouthWidth / eyeDistance;
-        const verticalRatio = mouthToNoseY / eyeDistance;
+        // Ratios
+        const mouthRatio = mouthWidth / eyeDistance; // Width
+        const verticalRatio = mouthToNoseY / eyeDistance; // Openness
 
-        // If mouth is unexpectedly wide or vertical distance changes rapidly,
-        // it might indicate speech. This is approximate.
-        if (mouthRatio > 1.0 || verticalRatio > 0.85) {
+        // Yelling/Yawning Check (Wide Open)
+        // Vertical ratio is usually < 0.5 when closed. > 0.8 is quite open.
+        if (verticalRatio > 0.7) {
+            lipViolationCount.current += 2; // Fast track
+            if (lipViolationCount.current >= 4) {
+                emitFlag('MOUTH_WIDE_OPEN', 'Mouth wide open (yelling/yawning) detected.', 'medium');
+                lipViolationCount.current = 0;
+            }
+        }
+        // Talking Check (Width + Some Openness)
+        else if (mouthRatio > 0.8 && verticalRatio > 0.3) {
             lipViolationCount.current++;
-            if (lipViolationCount.current >= 4) { // ~6 seconds of sustained movement
+            if (lipViolationCount.current >= 6) { // ~9 seconds
                 emitFlag('LIP_MOVEMENT', 'Possible speech detected (lip movement).', 'medium');
                 lipViolationCount.current = 0;
             }
         } else {
             lipViolationCount.current = Math.max(0, lipViolationCount.current - 1);
         }
+
+        // --- EXPORT TO AUDIO INTELLIGENCE ---
+        // Calculate velocity (change in vertical ratio)
+        // We need previous ratio to calc velocity. Storing in ref for next frame.
+        const prevRatio = videoRef.current._lastVerticalRatio || verticalRatio;
+        const velocity = Math.abs(verticalRatio - prevRatio);
+        videoRef.current._lastVerticalRatio = verticalRatio;
+
+        // Import dynamically to avoid circular dependency issues if any, or just import at top if safe.
+        // For now, assuming audioIntelligence is a singleton we can import.
+        import('../../lib/audioIntelligence').then(({ audioIntelligence }) => {
+            audioIntelligence.updateMouthData(verticalRatio, velocity);
+        });
     };
 
     if (!active) return null;

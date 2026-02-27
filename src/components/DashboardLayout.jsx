@@ -25,6 +25,7 @@ const navConfig = {
         { label: 'Live Monitor', icon: <Visibility />, path: '/dashboard/live-monitor' },
         { label: 'Flags', icon: <Flag />, path: '/dashboard/flags' },
         { label: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
+        { label: 'PW Test', icon: <BugReport />, path: '/dashboard/pw-test' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     admin: [
@@ -33,6 +34,7 @@ const navConfig = {
         { label: 'Courses', icon: <School />, path: '/dashboard/courses' },
         { label: 'Live Monitor', icon: <Visibility />, path: '/dashboard/live-monitor' },
         { label: 'Flags', icon: <Flag />, path: '/dashboard/flags' },
+        { label: 'Blacklist', icon: <Security />, path: '/dashboard/blacklist' },
         { label: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
@@ -50,8 +52,7 @@ const navConfig = {
     student: [
         { label: 'Dashboard', icon: <Dashboard />, path: '/dashboard/student' },
         { label: 'My Courses', icon: <School />, path: '/dashboard/courses' },
-        { label: 'Exams', icon: <Assignment />, path: '/dashboard/tests' },
-        { label: 'My Results', icon: <TrendingUp />, path: '/dashboard/performance' },
+        { label: 'Calendar', icon: <CalendarMonth />, path: '/dashboard/calendar' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     parent: [

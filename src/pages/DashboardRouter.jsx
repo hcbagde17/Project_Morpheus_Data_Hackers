@@ -8,6 +8,7 @@ import TeacherDashboard from './dashboards/TeacherDashboard';
 import StudentDashboard from './dashboards/StudentDashboard';
 import ParentDashboard from './dashboards/ParentDashboard';
 import TechnicalDashboard from './dashboards/TechnicalDashboard';
+import StudentCalendar from './StudentCalendar';
 
 // Shared pages
 import CourseManagement from './CourseManagement';
@@ -23,6 +24,8 @@ import StudentPerformance from './StudentPerformance';
 import FaceRegistration from './FaceRegistration';
 import TestResults from './TestResults';
 import StudentTestResult from './StudentTestResult';
+import AdminBlacklistManager from '../components/AdminBlacklistManager';
+import PWTestSession from './PWTestSession';
 
 const roleDashboardMap = {
     admin: '/dashboard/admin',
@@ -61,9 +64,12 @@ export default function DashboardRouter() {
                 <Route path="live-monitor" element={<LiveSessionMonitor />} />
                 <Route path="live-monitor" element={<LiveSessionMonitor />} />
                 <Route path="performance" element={<StudentPerformance />} />
+                <Route path="calendar" element={<StudentCalendar />} />
                 <Route path="face-registration" element={<FaceRegistration />} />
                 <Route path="test-results/:testId" element={<TestResults />} />
                 <Route path="results/:sessionId" element={<StudentTestResult />} />
+                <Route path="blacklist" element={<AdminBlacklistManager />} />
+                <Route path="pw-test" element={<PWTestSession />} />
 
                 {/* Default redirect based on role */}
                 <Route path="" element={<Navigate to={defaultPath} replace />} />

@@ -49,10 +49,16 @@ function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.supabase.co http://localhost:* ws://localhost:*; object-src 'none'; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in;"
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.supabase.co http://localhost:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net https://*.gstatic.com https://storage.googleapis.com https://*.ort.pyke.io; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; worker-src 'self' blob:; object-src 'none'; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in;"
         ]
       }
     });
+  });
+
+  // Auto-grant camera & microphone permissions (required for proctoring)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'mediaKeySystem', 'display-capture', 'screen'];
+    callback(allowed.includes(permission));
   });
 
   // Security: Verify navigation
@@ -114,4 +120,163 @@ ipcMain.handle('get-system-info', () => {
 ipcMain.handle('get-network-interfaces', () => {
   const os = require('os');
   return os.networkInterfaces();
+});
+
+ipcMain.handle('get-screen-sources', async () => {
+  try {
+    const { desktopCapturer } = require('electron');
+    // console.log('Main: Requesting screen sources...');
+    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+    // console.log(`Main: Found ${sources.length} sources`);
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL()
+    }));
+  } catch (err) {
+    console.error('Main: Error getting screen sources:', err);
+    throw err;
+  }
+});
+
+// --- System Monitor (Network/Process Risk) ---
+const SystemMonitor = require('./services/SystemMonitor.cjs');
+let systemMonitor = null;
+
+// --- Enforcement Service (Secure Exam) ---
+const EnforcementService = require('./services/EnforcementService.cjs');
+let enforcementService = null;
+
+// Ensure enforcement service instance exists
+function getEnforcementService() {
+  if (!enforcementService && mainWindow) {
+    enforcementService = new EnforcementService(mainWindow);
+  }
+  return enforcementService;
+}
+
+// Start during-exam enforcement (continuous detection + keyboard hooks)
+ipcMain.on('proctoring:start-enforcement', () => {
+  const svc = getEnforcementService();
+  if (svc) svc.start();
+});
+
+// Stop enforcement
+ipcMain.on('proctoring:stop-enforcement', () => {
+  if (enforcementService) {
+    enforcementService.stop();
+    enforcementService = null;
+  }
+});
+
+// PRE-EXAM: One-time process kill (terminates all blacklisted apps)
+ipcMain.handle('proctoring:pre-exam-kill', async () => {
+  const svc = getEnforcementService();
+  if (svc) {
+    return await svc.preExamKill();
+  }
+  return { killed: [], failed: [], total: 0 };
+});
+
+// Get default blacklist organized by category (for admin UI)
+ipcMain.handle('proctoring:get-default-blacklist', () => {
+  return EnforcementService.getDefaultBlacklistByCategory();
+});
+
+// Get currently active blacklist
+ipcMain.handle('proctoring:get-active-blacklist', () => {
+  const svc = getEnforcementService();
+  return svc ? svc.getActiveBlacklist() : [];
+});
+
+// Admin: Set whitelist (allow specific apps)
+ipcMain.handle('proctoring:set-whitelist', (event, processList) => {
+  const svc = getEnforcementService();
+  if (svc) {
+    svc.setWhitelist(processList);
+    return { success: true, count: processList.length };
+  }
+  return { success: false };
+});
+
+// Admin: Add custom app to blacklist
+ipcMain.handle('proctoring:add-to-blacklist', (event, processName) => {
+  const svc = getEnforcementService();
+  if (svc) {
+    svc.addToBlacklist(processName);
+    return { success: true };
+  }
+  return { success: false };
+});
+
+// Admin: Remove app from blacklist
+ipcMain.handle('proctoring:remove-from-blacklist', (event, processName) => {
+  const svc = getEnforcementService();
+  if (svc) {
+    svc.removeFromBlacklist(processName);
+    return { success: true };
+  }
+  return { success: false };
+});
+
+// --- System Monitor IPC ---
+ipcMain.on('proctoring:start-monitor', () => {
+  if (!systemMonitor && mainWindow) {
+    systemMonitor = new SystemMonitor(mainWindow);
+  }
+  if (systemMonitor) systemMonitor.start();
+});
+
+ipcMain.on('proctoring:stop-monitor', () => {
+  if (systemMonitor) {
+    systemMonitor.stop();
+    systemMonitor = null;
+  }
+});
+
+// --- Admin Privilege & Elevation ---
+ipcMain.handle('check-admin-status', () => {
+  return new Promise((resolve) => {
+    // "net session" only works with Admin privileges
+    require('child_process').exec('net session', (err) => {
+      resolve(!err);
+    });
+  });
+});
+
+ipcMain.on('restart-as-admin', () => {
+  const { ShellExecuteA } = require('./services/windows-api.cjs');
+
+  // Determine command and arguments based on environment
+  let command, args;
+
+  if (app.isPackaged) {
+    // Production: Run the app executable directly
+    command = app.getPath('exe');
+    args = '';
+  } else {
+    // Development: Run electron binary with the app source path
+    command = process.execPath;
+    // args needs to be a string for ShellExecute
+    args = `"${app.getAppPath()}"`; // Quote path for safety
+  }
+
+  console.log(`Main: Restarting as Admin (ShellExecute). Command: "${command}", Args: ${args}`);
+
+  // ShellExecuteA(HWND, Operation, File, Parameters, Directory, ShowCmd)
+  // Operation: "runas" (Triggers UAC)
+  // ShowCmd: 1 (SW_SHOWNORMAL)
+  // HWND: 0 (NULL)
+
+  const result = ShellExecuteA(0, 'runas', command, args, null, 1);
+
+  // Per MSDN: If the function succeeds, it returns a value greater than 32. 
+  // If the function fails, it returns an error value that indicates the cause of the failure.
+  if (result > 32) {
+    console.log('Main: ShellExecute success.');
+    app.quit();
+  } else {
+    console.error('Main: ShellExecute failed with code:', result);
+    // We might want to notify renderer, but app likely stays open if failed.
+  }
 });
