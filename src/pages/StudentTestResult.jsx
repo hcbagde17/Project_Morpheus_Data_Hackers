@@ -5,14 +5,16 @@ import {
     List, ListItem, ListItemText, Divider, Grid, Alert,
     Table, TableHead, TableRow, TableCell, TableBody,
     Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, TextField,
-    IconButton, Tooltip, Paper, Tabs, Tab
+    IconButton, Tooltip, Paper, Tabs, Tab, CircularProgress
 } from '@mui/material';
 import {
     ArrowBack, CheckCircle, Cancel, Help, Flag, Warning,
-    Videocam, PlayArrow, Info
+    Videocam, PlayArrow, Info, AutoAwesome
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
 import useAuthStore from '../store/authStore';
+
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 export default function StudentTestResult() {
     const { sessionId } = useParams();
@@ -33,6 +35,9 @@ export default function StudentTestResult() {
     const [selectedFlag, setSelectedFlag] = useState(null);
     const [reviewAction, setReviewAction] = useState('');
     const [reviewNotes, setReviewNotes] = useState('');
+    const [advisorOpen, setAdvisorOpen] = useState(false);
+    const [advisorLoading, setAdvisorLoading] = useState(false);
+    const [advisorResponse, setAdvisorResponse] = useState('');
 
     useEffect(() => { loadResult(); }, [sessionId]);
 
@@ -129,6 +134,43 @@ export default function StudentTestResult() {
         return JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
     }).length;
 
+    const handleAIAdvisor = async () => {
+        setAdvisorOpen(true);
+        if (advisorResponse) return; // Already generated
+        setAdvisorLoading(true);
+
+        try {
+            // Build the context string
+            let promptText = `Analyze the following student test performance and provide a short, encouraging list of specific topics the student should focus on studying to improve. Format using Markdown (bullet points, bold text). Do not output JSON. Keep it concise, friendly, and actionable.\n\nTest Subject: ${session.tests?.title || 'General Test'}\nMarks Obtained: ${session.score} / ${session.tests?.total_marks}\n\nQuestions Analysis:\n`;
+
+            questions.forEach((q, i) => {
+                const userAnsArray = answers[q.id]?.selected_answer || [];
+                const correctArray = q.correct_answer || [];
+                const isCorrect = JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
+                const userAns = Array.isArray(userAnsArray) ? userAnsArray.join(', ') : userAnsArray;
+                const correctAns = Array.isArray(q.correct_answer) ? q.correct_answer.join(', ') : q.correct_answer;
+
+                promptText += `Q${i + 1}: ${q.question_text}\nStudent Answer: ${userAns || 'Skipped'}\nCorrect Answer: ${correctAns}\nStatus: ${isCorrect ? 'Correct' : 'Incorrect'}\n\n`;
+            });
+
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: promptText }] }]
+                })
+            });
+
+            if (!res.ok) throw new Error("API call failed");
+            const data = await res.json();
+            setAdvisorResponse(data.candidates[0].content.parts[0].text);
+        } catch (err) {
+            console.error(err);
+            setAdvisorResponse("Sorry, the AI Advisor is currently unavailable. Please try again later.");
+        }
+        setAdvisorLoading(false);
+    };
+
     return (
         <Box>
             <Button startIcon={<ArrowBack />} onClick={() => navigate(-1)} sx={{ mb: 2 }}>Back</Button>
@@ -143,27 +185,36 @@ export default function StudentTestResult() {
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }} sx={{ textAlign: 'right', display: 'flex', gap: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
 
-                    {/* Flags Summary (Always Visible) */}
-                    {(flags.filter(f => f.severity === 'RED' || f.severity === 'high').length > 0 || flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length > 0) ? (
+                    {/* Flags Summary (Admins & Teachers Only) */}
+                    {(isAdmin || isTeacher) && (
                         <>
-                            {flags.filter(f => f.severity === 'RED' || f.severity === 'high').length > 0 && (
-                                <Chip label={`${flags.filter(f => f.severity === 'RED' || f.severity === 'high').length} R`} color="error" size="small" sx={{ fontWeight: 'bold' }} />
-                            )}
-                            {flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length > 0 && (
-                                <Chip label={`${flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length} O`} color="warning" size="small" sx={{ fontWeight: 'bold' }} />
+                            {(flags.filter(f => f.severity === 'RED' || f.severity === 'high').length > 0 || flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length > 0) ? (
+                                <>
+                                    {flags.filter(f => f.severity === 'RED' || f.severity === 'high').length > 0 && (
+                                        <Chip label={`${flags.filter(f => f.severity === 'RED' || f.severity === 'high').length} R`} color="error" size="small" sx={{ fontWeight: 'bold' }} />
+                                    )}
+                                    {flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length > 0 && (
+                                        <Chip label={`${flags.filter(f => f.severity === 'ORANGE' || f.severity === 'medium' || f.severity === 'YELLOW').length} O`} color="warning" size="small" sx={{ fontWeight: 'bold' }} />
+                                    )}
+                                </>
+                            ) : (
+                                <Chip label="Clean" color="success" size="small" sx={{ fontWeight: 'bold' }} />
                             )}
                         </>
-                    ) : (
-                        <Chip label="Clean" color="success" size="small" sx={{ fontWeight: 'bold' }} />
                     )}
 
                     {/* Score/Status */}
                     {session.status === 'invalidated' ? (
                         <Chip label="RESULT INVALIDATED" color="error" sx={{ fontSize: '1.2rem', py: 2, px: 1, fontWeight: 'bold' }} />
                     ) : (
-                        <Chip label={`Score: ${session.score} / ${session.tests?.total_marks}`}
-                            color={session.score >= (session.tests?.total_marks * 0.4) ? "success" : "error"}
-                            sx={{ fontSize: '1.2rem', py: 2, px: 1 }} />
+                        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                            <Button variant="contained" sx={{ bgcolor: '#6C63FF', color: 'white' }} startIcon={<AutoAwesome />} onClick={handleAIAdvisor}>
+                                AI Advisor
+                            </Button>
+                            <Chip label={`Score: ${session.score} / ${session.tests?.total_marks}`}
+                                color={session.score >= (session.tests?.total_marks * 0.4) ? "success" : "error"}
+                                sx={{ fontSize: '1.2rem', py: 2, px: 1 }} />
+                        </Box>
                     )}
                 </Grid>
             </Grid>
@@ -439,6 +490,26 @@ export default function StudentTestResult() {
                             Submit Review
                         </Button>
                     )}
+                </DialogActions>
+            </Dialog>
+
+            {/* AI Advisor Dialog */}
+            <Dialog open={advisorOpen} onClose={() => setAdvisorOpen(false)} maxWidth="md" fullWidth>
+                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <AutoAwesome sx={{ color: '#6C63FF' }} /> AI Study Advisor
+                </DialogTitle>
+                <DialogContent dividers sx={{ minHeight: '300px' }}>
+                    {advisorLoading ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', mt: 4 }}>
+                            <CircularProgress sx={{ mb: 2, color: '#6C63FF' }} />
+                            <Typography>Analyzing your test performance...</Typography>
+                        </Box>
+                    ) : (
+                        <Typography sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{advisorResponse}</Typography>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setAdvisorOpen(false)}>Close</Button>
                 </DialogActions>
             </Dialog>
         </Box>

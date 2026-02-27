@@ -42,7 +42,7 @@ function StatCard({ title, value, icon, color, subtitle }) {
 
 export default function AdminDashboard() {
     const navigate = useNavigate();
-    const [stats, setStats] = useState({ users: 0, courses: 0, tests: 0, activeSessions: 0 });
+    const [stats, setStats] = useState({ users: 0, courses: 0, students: 0, activeSessions: 0 });
     const [recentUsers, setRecentUsers] = useState([]);
     const [activeSessions, setActiveSessions] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -53,10 +53,10 @@ export default function AdminDashboard() {
 
     const loadData = async () => {
         try {
-            const [usersRes, coursesRes, testsRes, sessionsRes, recentRes] = await Promise.all([
+            const [usersRes, coursesRes, studentsRes, sessionsRes, recentRes] = await Promise.all([
                 supabase.from('users').select('id', { count: 'exact', head: true }),
                 supabase.from('courses').select('id', { count: 'exact', head: true }),
-                supabase.from('tests').select('id', { count: 'exact', head: true }),
+                supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'student'),
                 supabase.from('exam_sessions').select('*').eq('status', 'in_progress'),
                 supabase.from('users').select('*').order('created_at', { ascending: false }).limit(5),
             ]);
@@ -64,7 +64,7 @@ export default function AdminDashboard() {
             setStats({
                 users: usersRes.count || 0,
                 courses: coursesRes.count || 0,
-                tests: testsRes.count || 0,
+                students: studentsRes.count || 0,
                 activeSessions: sessionsRes.data?.length || 0,
             });
 
@@ -99,7 +99,7 @@ export default function AdminDashboard() {
                     <StatCard title="Courses" value={stats.courses} icon={<School />} color="#00D9FF" />
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                    <StatCard title="Tests Created" value={stats.tests} icon={<Assignment />} color="#4ECDC4" />
+                    <StatCard title="Total Students" value={stats.students} icon={<School />} color="#4ECDC4" />
                 </Grid>
                 <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <StatCard title="Active Sessions" value={stats.activeSessions} icon={<Visibility />} color="#FFB74D"

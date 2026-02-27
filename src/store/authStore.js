@@ -64,6 +64,7 @@ const useAuthStore = create((set, get) => ({
                     id: user.id,
                     email: user.email,
                     username: user.username,
+                    full_name: user.full_name,
                     role: user.role,
                     phone: user.phone,
                     profile_photo_url: user.profile_photo_url,

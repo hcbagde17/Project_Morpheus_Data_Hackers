@@ -14,8 +14,9 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 // Initialize PDF.js worker using the local bundled worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-const apiKey = import.meta.env.VITE_GROQ_API_KEY;
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+
 const MODELS = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },

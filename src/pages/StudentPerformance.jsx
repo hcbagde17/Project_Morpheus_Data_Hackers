@@ -21,22 +21,40 @@ export default function StudentPerformance() {
     const [selectedStudent, setSelectedStudent] = useState('');
     const [loading, setLoading] = useState(true);
     const isTeacherOrAdmin = ['admin', 'teacher', 'technical'].includes(user?.role);
+    const isParent = user?.role === 'parent';
 
     useEffect(() => {
         if (isTeacherOrAdmin) {
             loadStudents();
+        } else if (isParent) {
+            loadChildren();
         } else {
             loadPerformance(user.id);
         }
-    }, []);
+    }, [user]);
 
     const loadStudents = async () => {
-        const { data } = await supabase.from('users').select('id, username, email')
-            .eq('role', 'student').eq('is_active', true).order('username');
+        const { data } = await supabase.from('users').select('id, username, full_name, email')
+            .eq('role', 'student').order('username');
         setStudents(data || []);
         if (data?.length > 0) {
             setSelectedStudent(data[0].id);
             loadPerformance(data[0].id);
+        } else {
+            setLoading(false);
+        }
+    };
+
+    const loadChildren = async () => {
+        const { data } = await supabase.from('parent_student')
+            .select('student_id, users!parent_student_student_id_fkey(id, username, full_name, email)')
+            .eq('parent_id', user.id);
+
+        const kids = data?.map(d => d.users) || [];
+        setStudents(kids);
+        if (kids.length > 0) {
+            setSelectedStudent(kids[0].id);
+            loadPerformance(kids[0].id);
         } else {
             setLoading(false);
         }
@@ -87,17 +105,17 @@ export default function StudentPerformance() {
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
                 <Box>
                     <Typography variant="h4" fontWeight={700}>
-                        {isTeacherOrAdmin ? 'Student Performance History' : 'My Performance'}
+                        {isTeacherOrAdmin ? 'Student Performance History' : isParent ? "Child's Performance" : 'My Performance'}
                     </Typography>
                     <Typography color="text.secondary">
-                        {isTeacherOrAdmin ? 'View detailed exam history for any student' : 'Track your exam results and progress'}
+                        {isTeacherOrAdmin ? 'View detailed exam history for any student' : isParent ? 'Track your child\'s exam results and progress' : 'Track your exam results and progress'}
                     </Typography>
                 </Box>
-                {isTeacherOrAdmin && students.length > 0 && (
-                    <TextField select label="Select Student" value={selectedStudent}
+                {(isTeacherOrAdmin || isParent) && students.length > 0 && (
+                    <TextField select label={isParent ? "Select Child" : "Select Student"} value={selectedStudent}
                         onChange={e => handleStudentChange(e.target.value)} sx={{ width: 250 }}>
                         {students.map(s => (
-                            <MenuItem key={s.id} value={s.id}>{s.username} — {s.email}</MenuItem>
+                            <MenuItem key={s.id} value={s.id}>{s.full_name || s.username} — {s.email}</MenuItem>
                         ))}
                     </TextField>
                 )}

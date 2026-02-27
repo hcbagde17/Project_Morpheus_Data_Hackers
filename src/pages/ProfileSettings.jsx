@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Box, Card, CardContent, Typography, TextField, Button, Avatar,
     Grid, Alert, Divider, CircularProgress, Chip,
@@ -23,6 +23,33 @@ export default function ProfileSettings() {
     const [fullName, setFullName] = useState(user?.full_name || '');
 
     if (!user) return null;
+
+    useEffect(() => {
+        const fetchProfile = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('users')
+                    .select('full_name')
+                    .eq('id', user.id)
+                    .single();
+
+                if (data && data.full_name) {
+                    setFullName(data.full_name);
+                    // Also silently patch the auth store so the rest of the UI (TopBar) catches up
+                    useAuthStore.setState({ user: { ...user, full_name: data.full_name } });
+
+                    const stored = JSON.parse(localStorage.getItem('pw_session'));
+                    if (stored) {
+                        stored.user.full_name = data.full_name;
+                        localStorage.setItem('pw_session', JSON.stringify(stored));
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch fresh profile data:", err);
+            }
+        };
+        fetchProfile();
+    }, [user.id]);
 
     const handlePhotoChange = (e) => {
         const file = e.target.files[0];
@@ -99,7 +126,7 @@ export default function ProfileSettings() {
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 3 }}>
                             <Box sx={{ position: 'relative' }}>
                                 <Avatar src={photoPreview} sx={{ width: 88, height: 88, fontSize: 32, border: '3px solid rgba(108,99,255,0.3)' }}>
-                                    {(user.full_name || user.username)?.[0]?.toUpperCase()}
+                                    {(fullName || user.username)?.[0]?.toUpperCase()}
                                 </Avatar>
                                 <input type="file" accept="image/*" onChange={handlePhotoChange} id="avatar-upload" style={{ display: 'none' }} />
                                 <label htmlFor="avatar-upload">
@@ -112,7 +139,7 @@ export default function ProfileSettings() {
                                 </label>
                             </Box>
                             <Box>
-                                <Typography variant="h6" fontWeight={600}>{user.full_name || user.username}</Typography>
+                                <Typography variant="h6" fontWeight={600}>{fullName || user.username}</Typography>
                                 <Chip label={user.role} size="small" variant="outlined" sx={{ mt: 0.5 }} />
                             </Box>
                         </Box>

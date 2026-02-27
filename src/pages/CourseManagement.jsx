@@ -3,6 +3,7 @@ import {
     Box, Card, CardContent, Typography, Button, TextField, Dialog, DialogTitle,
     DialogContent, DialogActions, Table, TableHead, TableRow, TableCell, TableBody,
     Chip, MenuItem, Alert, LinearProgress, Avatar, IconButton, Tooltip,
+    List, ListItem, ListItemButton, ListItemText, Checkbox
 } from '@mui/material';
 import { School, Add, Edit, Delete, People } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
@@ -19,6 +20,8 @@ export default function CourseManagement() {
     const [selectedCourse, setSelectedCourse] = useState(null);
     const [error, setError] = useState('');
     const [form, setForm] = useState({ name: '', code: '', description: '', teacher_id: '' });
+    const [enrolledStudentIds, setEnrolledStudentIds] = useState(new Set());
+    const [searchQuery, setSearchQuery] = useState('');
 
     const isAdmin = ['admin', 'technical'].includes(user?.role);
 
@@ -38,7 +41,7 @@ export default function CourseManagement() {
         if (isAdmin) {
             const { data: t } = await supabase.from('users').select('id, username').eq('role', 'teacher');
             setTeachers(t || []);
-            const { data: s } = await supabase.from('users').select('id, username').eq('role', 'student');
+            const { data: s } = await supabase.from('users').select('id, username, full_name, email').eq('role', 'student');
             setStudents(s || []);
         }
         setLoading(false);
@@ -57,11 +60,35 @@ export default function CourseManagement() {
         } catch (err) { setError(err.message); }
     };
 
-    const handleEnroll = async (studentId) => {
+    const fetchEnrollments = async (course) => {
+        try {
+            const { data } = await supabase.from('enrollments')
+                .select('student_id').eq('course_id', course.id);
+            setEnrolledStudentIds(new Set(data?.map(e => e.student_id) || []));
+        } catch (err) { console.error('Error fetching enrollments:', err); }
+    };
+
+    const handleToggleEnrollment = async (studentId, isEnrolled) => {
         if (!selectedCourse) return;
         try {
-            await supabase.from('enrollments').insert({ course_id: selectedCourse.id, student_id: studentId });
-            loadData();
+            if (isEnrolled) {
+                // Unenroll
+                await supabase.from('enrollments')
+                    .delete()
+                    .eq('course_id', selectedCourse.id)
+                    .eq('student_id', studentId);
+            } else {
+                // Enroll
+                await supabase.from('enrollments')
+                    .insert({ course_id: selectedCourse.id, student_id: studentId });
+            }
+            // Update local set for instant UI response
+            setEnrolledStudentIds(prev => {
+                const newSet = new Set(prev);
+                isEnrolled ? newSet.delete(studentId) : newSet.add(studentId);
+                return newSet;
+            });
+            loadData(); // Update background table counts
         } catch (err) { console.error(err); }
     };
 
@@ -93,7 +120,12 @@ export default function CourseManagement() {
                                 <TableCell><Chip label={c.enrollments?.[0]?.count || 0} size="small" variant="outlined" /></TableCell>
                                 {isAdmin && <TableCell>
                                     <Tooltip title="Manage Students">
-                                        <IconButton size="small" onClick={() => { setSelectedCourse(c); setEnrollOpen(true); }}>
+                                        <IconButton size="small" onClick={() => {
+                                            setSelectedCourse(c);
+                                            setSearchQuery('');
+                                            fetchEnrollments(c);
+                                            setEnrollOpen(true);
+                                        }}>
                                             <People fontSize="small" />
                                         </IconButton>
                                     </Tooltip>
@@ -129,11 +161,45 @@ export default function CourseManagement() {
             {/* Enroll Dialog */}
             <Dialog open={enrollOpen} onClose={() => setEnrollOpen(false)} maxWidth="sm" fullWidth>
                 <DialogTitle>Manage Students — {selectedCourse?.name}</DialogTitle>
-                <DialogContent>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Click to enroll a student</Typography>
-                    {students.map(s => (
-                        <Chip key={s.id} label={s.username} onClick={() => handleEnroll(s.id)} sx={{ m: 0.5 }} variant="outlined" clickable />
-                    ))}
+                <DialogContent dividers sx={{ p: 0 }}>
+                    <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+                        <TextField
+                            fullWidth
+                            size="small"
+                            placeholder="Search by name or email..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </Box>
+                    <List sx={{ pt: 0, maxHeight: 400, overflow: 'auto' }}>
+                        {students
+                            .filter(s => (s.full_name || s.username).toLowerCase().includes(searchQuery.toLowerCase()) || (s.email || '').toLowerCase().includes(searchQuery.toLowerCase()))
+                            .map(s => {
+                                const isEnrolled = enrolledStudentIds.has(s.id);
+                                return (
+                                    <ListItem key={s.id} disablePadding>
+                                        <ListItemButton onClick={() => handleToggleEnrollment(s.id, isEnrolled)}>
+                                            <Checkbox
+                                                edge="start"
+                                                checked={isEnrolled}
+                                                tabIndex={-1}
+                                                disableRipple
+                                            />
+                                            <ListItemText
+                                                primary={s.full_name || s.username}
+                                                secondary={s.email}
+                                                secondaryTypographyProps={{ fontSize: '0.8rem' }}
+                                            />
+                                        </ListItemButton>
+                                    </ListItem>
+                                );
+                            })}
+                        {students.length === 0 && (
+                            <Typography sx={{ p: 3, textAlign: 'center' }} color="text.secondary">
+                                No students found.
+                            </Typography>
+                        )}
+                    </List>
                 </DialogContent>
                 <DialogActions><Button onClick={() => setEnrollOpen(false)}>Close</Button></DialogActions>
             </Dialog>

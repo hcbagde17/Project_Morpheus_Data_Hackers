@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
     Box, Card, CardContent, Typography, Chip, LinearProgress,
-    Grid, Button, Divider, Alert
+    Grid, Button, Divider, Alert, TextField, MenuItem
 } from '@mui/material';
 import { PlayArrow, CalendarMonth, AccessTime, Event } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
@@ -12,14 +12,38 @@ export default function StudentCalendar() {
     const navigate = useNavigate();
     const { user } = useAuthStore();
     const [tests, setTests] = useState([]);
+    const [children, setChildren] = useState([]);
+    const [selectedChild, setSelectedChild] = useState('');
     const [loading, setLoading] = useState(true);
+    const isParent = user?.role === 'parent';
 
-    useEffect(() => { loadTests(); }, []);
+    useEffect(() => {
+        if (isParent) {
+            loadChildren();
+        } else {
+            loadTests(user.id);
+        }
+    }, [user]);
 
-    const loadTests = async () => {
+    const loadChildren = async () => {
+        const { data } = await supabase.from('parent_student')
+            .select('student_id, users!parent_student_student_id_fkey(id, username, email)')
+            .eq('parent_id', user.id);
+
+        const kids = data?.map(d => d.users) || [];
+        setChildren(kids);
+        if (kids.length > 0) {
+            setSelectedChild(kids[0].id);
+            loadTests(kids[0].id);
+        } else {
+            setLoading(false);
+        }
+    };
+
+    const loadTests = async (studentId) => {
         try {
             // Get enrolled courses
-            const { data: enrolled } = await supabase.from('enrollments').select('course_id').eq('student_id', user.id);
+            const { data: enrolled } = await supabase.from('enrollments').select('course_id').eq('student_id', studentId);
             const courseIds = enrolled?.map(e => e.course_id) || [];
 
             if (courseIds.length === 0) {
@@ -71,9 +95,24 @@ export default function StudentCalendar() {
 
     return (
         <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, gap: 2 }}>
-                <CalendarMonth fontSize="large" color="primary" />
-                <Typography variant="h4" fontWeight={700}>Exam Calendar</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <CalendarMonth fontSize="large" color="primary" />
+                    <Typography variant="h4" fontWeight={700}>
+                        {isParent ? "Child's Exam Calendar" : "Exam Calendar"}
+                    </Typography>
+                </Box>
+                {isParent && children.length > 0 && (
+                    <TextField select label="Select Child" value={selectedChild}
+                        onChange={e => {
+                            setSelectedChild(e.target.value);
+                            loadTests(e.target.value);
+                        }} sx={{ width: 250 }}>
+                        {children.map(s => (
+                            <MenuItem key={s.id} value={s.id}>{s.username} — {s.email}</MenuItem>
+                        ))}
+                    </TextField>
+                )}
             </Box>
 
             {tests.length === 0 ? (
@@ -115,7 +154,11 @@ export default function StudentCalendar() {
                                                     {' '}({test.duration_minutes} min)
                                                 </Box>
 
-                                                {isStartable ? (
+                                                {isParent ? (
+                                                    <Button fullWidth disabled variant="outlined">
+                                                        {status.label}
+                                                    </Button>
+                                                ) : isStartable ? (
                                                     <Button
                                                         fullWidth
                                                         variant="contained"

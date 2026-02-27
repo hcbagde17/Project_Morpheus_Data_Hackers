@@ -142,14 +142,14 @@ export default function IdentityMonitor({ active, onStatusChange, embeddingOverr
                                 // Only run recognition if we have a registered embedding
                                 if (registeredEmbedding) {
                                     // Extract embedding only if face quality is decent
-                                    // Lowered threshold to 0.4 to tolerate mouth opening/expressions
-                                    if (face.score > 0.4) {
+                                    // Lowered threshold to 0.7 to tolerate mouth opening/expressions
+                                    if (face.score > 0.7) {
                                         const currentEmbedding = await extractEmbedding(videoRef.current);
                                         const similarity = calculateSimilarity(registeredEmbedding, currentEmbedding);
 
                                         setDebugInfo(`Match: ${(similarity * 100).toFixed(1)}%`);
 
-                                        if (similarity < 0.4) {
+                                        if (similarity < 0.7) {
                                             handleFlag('IMPERSONATION', `Identity verification failed. Match: ${(similarity * 100).toFixed(0)}%`, 'high');
                                         } else {
                                             clearFlag();

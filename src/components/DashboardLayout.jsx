@@ -23,12 +23,9 @@ const COLLAPSED_WIDTH = 72;
 const navConfig = {
     technical: [
         { label: 'Dashboard', icon: <Dashboard />, path: '/dashboard/technical' },
-        { label: 'System Metrics', icon: <Computer />, path: '/dashboard/technical' },
-        { label: 'Database', icon: <Storage />, path: '/dashboard/technical' },
         { label: 'Live Monitor', icon: <Visibility />, path: '/dashboard/live-monitor' },
-        { label: 'Flags', icon: <Flag />, path: '/dashboard/flags' },
-        { label: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
         { label: 'PW Test', icon: <BugReport />, path: '/dashboard/pw-test' },
+        { label: 'Blacklist', icon: <Security />, path: '/dashboard/blacklist' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     admin: [
@@ -55,13 +52,14 @@ const navConfig = {
     student: [
         { label: 'Dashboard', icon: <Dashboard />, path: '/dashboard/student' },
         { label: 'My Courses', icon: <School />, path: '/dashboard/courses' },
+        { label: 'Performance', icon: <TrendingUp />, path: '/dashboard/performance' },
         { label: 'Calendar', icon: <CalendarMonth />, path: '/dashboard/calendar' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     parent: [
         { label: 'Dashboard', icon: <Dashboard />, path: '/dashboard/parent' },
-        { label: 'Performance', icon: <Assessment />, path: '/dashboard/parent' },
-        { label: 'Calendar', icon: <CalendarMonth />, path: '/dashboard/parent' },
+        { label: 'Performance', icon: <TrendingUp />, path: '/dashboard/performance' },
+        { label: 'Calendar', icon: <CalendarMonth />, path: '/dashboard/calendar' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
 };
