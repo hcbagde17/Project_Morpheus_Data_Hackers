@@ -27,6 +27,11 @@ export class EvidenceCapture {
         this.uploadQueue = [];
         this.isUploading = false;
         this._stopTimer = null;
+        // The very first chunk MediaRecorder emits contains the WebM container
+        // header (EBML element + Segment Info + Track headers). Without it,
+        // any extracted sub-clip is an un-parseable fragment.
+        // We keep it forever (never prune) and prepend it to every clip.
+        this.headerChunk = null;
     }
 
     // ─── MIME type (WebM preferred for broad compatibility) ───────────────────
@@ -48,26 +53,67 @@ export class EvidenceCapture {
         return (mimeType || '').startsWith('video/mp4') ? 'mp4' : 'webm';
     }
 
+
+    // ─── Codec candidates (VP8 first — Electron OSS FFmpeg supports VP8, not VP9) ─
+    static get CODEC_CANDIDATES() {
+        return [
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=vp8',
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp9',
+            'video/webm',
+            'video/mp4',
+            '',  // browser default
+        ];
+    }
+
     // ─── Start recording ──────────────────────────────────────────────────────
     start(stream) {
         if (this.isRecording) return;
         this.stream = stream;
 
-        const mimeType = this._getSupportedMimeType();
-        try {
-            this.recorder = new MediaRecorder(stream, {
-                mimeType,
-                videoBitsPerSecond: 500_000,
-            });
-        } catch (e) {
-            console.warn('[EvidenceCapture] Primary MIME unsupported, falling back:', e.message);
-            this.recorder = new MediaRecorder(stream, { videoBitsPerSecond: 500_000 });
+        console.log('[EvidenceCapture] Probing codec support in this Electron build...');
+        EvidenceCapture.CODEC_CANDIDATES.forEach(t => {
+            if (t) console.log(`  isTypeSupported('${t}') =`, MediaRecorder.isTypeSupported(t));
+        });
+
+        // Try each codec by actually constructing a MediaRecorder — isTypeSupported
+        // is unreliable in Electron and may return false for VP8 even when it works.
+        let createdRecorder = null;
+        let chosenMime = '';
+
+        for (const mime of EvidenceCapture.CODEC_CANDIDATES) {
+            try {
+                const opts = mime
+                    ? { mimeType: mime, videoBitsPerSecond: 500_000 }
+                    : { videoBitsPerSecond: 500_000 };
+                const r = new MediaRecorder(stream, opts);
+                createdRecorder = r;
+                chosenMime = mime;
+                break;
+            } catch (e) {
+                console.warn(`[EvidenceCapture] Codec '${mime}' rejected:`, e.message);
+            }
         }
 
-        this.mimeType = this.recorder.mimeType || mimeType;
+        if (!createdRecorder) {
+            console.error('[EvidenceCapture] No codec worked — cannot record evidence.');
+            return;
+        }
+
+        this.recorder = createdRecorder;
+        this.mimeType = this.recorder.mimeType || chosenMime || 'video/webm';
+        console.log(`[EvidenceCapture] ✅ Recording with codec: "${this.mimeType}"`);
+
+        this.headerChunk = null; // reset on each new recording
 
         this.recorder.ondataavailable = (e) => {
             if (e.data && e.data.size > 0) {
+                if (!this.headerChunk) {
+                    // First chunk = WebM container header — keep it permanently
+                    this.headerChunk = e.data;
+                    console.log(`[EvidenceCapture] Header chunk captured: ${(e.data.size / 1024).toFixed(1)} KB`);
+                }
                 this.chunks.push(e.data);
                 this.chunkTimestamps.push(Date.now());
                 this._pruneBuffer();
@@ -76,7 +122,6 @@ export class EvidenceCapture {
 
         this.recorder.start(CHUNK_INTERVAL_MS);
         this.isRecording = true;
-        console.log('[EvidenceCapture] Recording started', { mimeType: this.mimeType, streamId: stream.id });
     }
 
     // ─── Stop recording (with grace window) ──────────────────────────────────
@@ -122,13 +167,24 @@ export class EvidenceCapture {
         }
 
         if (relevantChunks.length === 0) {
-            console.warn('[EvidenceCapture] extractClip: no chunks in window');
-            return null;
+            console.warn('[EvidenceCapture] extractClip: no chunks in window, using all buffered chunks');
+            relevantChunks.push(...this.chunks);
         }
 
-        const mimeType = this.mimeType || this._getSupportedMimeType();
-        const blob = new Blob(relevantChunks, { type: mimeType });
-        console.log(`[EvidenceCapture] Extracted clip: ${(blob.size / 1024).toFixed(0)} KB, ${relevantChunks.length} chunks`);
+        // CRITICAL FIX: Always prepend the header chunk.
+        // The WebM EBML/Segment/Track header is only in the first chunk ever
+        // recorded. After 30s of recording it gets pruned from the circular
+        // buffer. Without it, the blob is a headerless fragment that
+        // FFmpegDemuxer (and every other player) refuses to open.
+        const allChunks = [];
+        if (this.headerChunk && relevantChunks[0] !== this.headerChunk) {
+            allChunks.push(this.headerChunk); // prepend header
+        }
+        allChunks.push(...relevantChunks);
+
+        const mimeType = this.mimeType || 'video/webm';
+        const blob = new Blob(allChunks, { type: mimeType });
+        console.log(`[EvidenceCapture] Extracted clip: ${(blob.size / 1024).toFixed(0)} KB, ${relevantChunks.length} data chunks + header`);
         return blob;
     }
 
