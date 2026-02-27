@@ -63,12 +63,36 @@ export default function UserManagement() {
 
     const handleCreate = async () => {
         setError('');
+
+        // Validation for email
+        const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!emailRegex.test(form.email)) {
+            setError('Please enter a valid email address.');
+            return;
+        }
+
+        // Validation for phone
+        const phoneRegex = /^\d{10}$/;
+        if (!phoneRegex.test(form.phone)) {
+            setError('Phone number must be exactly 10 digits.');
+            return;
+        }
+
         try {
             // Create the main user
             const user = await createUser(form.full_name, form.email, form.phone, form.role);
 
             // If student and parent info provided, create and link parent
             if (form.role === 'student' && form.parent_email?.trim()) {
+                if (!emailRegex.test(form.parent_email.trim())) {
+                    setError('Please enter a valid parent email address.');
+                    return;
+                }
+                if (form.parent_phone && !phoneRegex.test(form.parent_phone)) {
+                    setError('Parent phone number must be exactly 10 digits.');
+                    return;
+                }
+
                 // Check if parent already exists
                 const { data: existing } = await supabase.from('users').select('id')
                     .eq('email', form.parent_email.trim()).limit(1);
@@ -109,6 +133,11 @@ export default function UserManagement() {
             const row = {};
             headers.forEach((h, j) => { row[h] = vals[j]; });
             try {
+                const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+                const phoneRegex = /^\d{10}$/;
+                if (!emailRegex.test(row.email)) throw new Error('Invalid email format');
+                if (!phoneRegex.test(row.phone)) throw new Error('Invalid phone format');
+
                 await createUser(row.full_name || row.name || '', row.email, row.phone, row.role || 'student');
                 success++;
             } catch (err) { failed++; errors.push(`Row ${i}: ${err.message}`); }
@@ -130,6 +159,13 @@ export default function UserManagement() {
             const row = {};
             headers.forEach((h, j) => { row[h] = vals[j]; });
             try {
+                const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+                const phoneRegex = /^\d{10}$/;
+                if (!emailRegex.test(row.student_email)) throw new Error('Invalid student email format');
+                if (!phoneRegex.test(row.student_phone)) throw new Error('Invalid student phone format');
+                if (row.parent_email?.trim() && !emailRegex.test(row.parent_email.trim())) throw new Error('Invalid parent email format');
+                if (row.parent_phone?.trim() && !phoneRegex.test(row.parent_phone.trim())) throw new Error('Invalid parent phone format');
+
                 // Create student
                 const student = await createUser(row.student_name || '', row.student_email, row.student_phone, 'student');
 
