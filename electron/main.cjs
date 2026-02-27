@@ -1,11 +1,9 @@
+// Load .env into process.env (covers both SUPABASE_ and MODEL_MASTER_SECRET)
+require('dotenv').config();
+
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
-
-// Make Supabase credentials available to the Electron main process (EnforcementService, etc.)
-// These match src/lib/supabase.js — single source of truth is the .env file in prod.
-process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://itdratwmxbugkmbhoiyw.supabase.co';
-process.env.SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_C9Uehgg5m0fC5O1-RmrQoQ_pldk3tsU';
 
 // Configure autoUpdater
 autoUpdater.autoDownload = false;
@@ -284,4 +282,12 @@ ipcMain.on('restart-as-admin', () => {
     console.error('Main: ShellExecute failed with code:', result);
     // We might want to notify renderer, but app likely stays open if failed.
   }
+});
+
+// ─── Encrypted ONNX Model Loader ─────────────────────────────────────────────
+// Decrypts a .onnx.enc file in-memory and returns the raw ArrayBuffer to the
+// renderer. The decrypted bytes never touch disk.
+ipcMain.handle('load-model', async (_, modelName) => {
+  const { loadModel } = require('./services/modelLoader.cjs');
+  return await loadModel(modelName);
 });

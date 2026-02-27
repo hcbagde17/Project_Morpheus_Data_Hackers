@@ -46,4 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // System Control
     checkAdminStatus: () => ipcRenderer.invoke('check-admin-status'),
     restartAsAdmin: () => ipcRenderer.send('restart-as-admin'),
+
+    // Encrypted ONNX Model Loader
+    // Returns an ArrayBuffer of the decrypted model bytes.
+    // modelName: 'det_10g' | 'w600k_r50' | 'MiniFASNetV2'
+    loadModel: (modelName) => ipcRenderer.invoke('load-model', modelName),
 });
