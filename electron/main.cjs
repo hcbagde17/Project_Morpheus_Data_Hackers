@@ -51,8 +51,39 @@ function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.supabase.co http://localhost:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net https://*.gstatic.com https://storage.googleapis.com https://*.ort.pyke.io https://api.groq.com https://generativelanguage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; worker-src 'self' blob:; object-src 'none'; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in;"
+          [
+            // Base: allow self + inlining (needed by Vite/React)
+            "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
+            // Stylesheets — style-src-elem must explicitly allow Google Fonts <link> tags
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
+            "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
+            // Fonts
+            "font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net https://*.gstatic.com data:",
+            // Scripts
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:",
+            // Workers (ONNX WASM)
+            "worker-src 'self' blob:",
+            // Images
+            "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in",
+            // Plugins
+            "object-src 'none'",
+            // connect-src: ALL outbound fetch/XHR/WebSocket targets
+            // Must include BOTH https:// AND wss:// for Supabase Realtime.
+            [
+              "connect-src 'self'",
+              "http://localhost:* ws://localhost:*",              // Vite dev HMR
+              "https://*.supabase.co wss://*.supabase.co",       // REST + Realtime WebSocket
+              "https://*.supabase.in wss://*.supabase.in",
+              "https://api.groq.com",
+              "https://generativelanguage.googleapis.com",        // Gemini
+              "https://storage.googleapis.com",
+              "https://*.ort.pyke.io",                            // ONNX CDN fallback
+              "https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net",
+            ].join(" "),
+          ].join("; ")
+
         ]
+
       }
     });
   });
