@@ -12,7 +12,7 @@ import { audioIntelligence } from '../../lib/audioIntelligence';
  * - Expandable debug breakdown (5 sub-scores + raw metrics)
  * - Risk level chip
  */
-export default function AudioIntelligence({ active, onFlag, stream: sharedStream }) {
+export default function AudioIntelligence({ active, onFlag, stream: sharedStream, hidden = false }) {
     const [status, setStatus] = useState('initializing'); // initializing | calibrating | active | error
     const [scoreData, setScoreData] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -109,19 +109,12 @@ export default function AudioIntelligence({ active, onFlag, stream: sharedStream
         return 'Low';
     };
 
+    // Hidden mode: run all logic but no visible UI
+    if (hidden) return null;
+
     return (
         <Box sx={{
-            position: 'fixed',
-            bottom: 16,
-            right: 16,
-            width: 300,
-            bgcolor: 'background.paper',
-            borderRadius: 2,
-            boxShadow: 3,
             p: 2,
-            zIndex: 9999,
-            border: '1px solid',
-            borderColor: score > 0.65 ? 'error.main' : 'divider',
             transition: 'border-color 0.3s ease',
         }}>
             {/* Header */}

@@ -9,17 +9,23 @@ import {
 import {
     Timer, NavigateBefore, NavigateNext, Flag, Send,
     CheckCircle, Circle, Warning, Error as ErrorIcon, ArrowBack,
+    Calculate,
 } from '@mui/icons-material';
 
 // Pre-test checks (same as student ExamSession)
 import PreTestCheck from '../components/PreTestCheck';
 
-// Proctoring modules (same as ExamSession)
-import IdentityMonitor from '../components/proctoring/IdentityMonitor';
+// Proctoring modules (no IdentityMonitor in PW Test)
 import DeviceMonitor from '../components/proctoring/DeviceMonitor';
 import VisionBehaviorMonitor from '../components/proctoring/VisionBehaviorMonitor';
 import AudioIntelligence from '../components/proctoring/AudioIntelligence';
 import NetworkMonitor from '../components/proctoring/NetworkMonitor';
+
+// Floating panel wrapper for draggable monitors
+import FloatingPanel from '../components/FloatingPanel';
+
+// In-app calculator
+import ExamCalculator from '../components/ExamCalculator';
 
 // Admin Override panel (same as ExamSession)
 import AdminOverridePanel from '../components/AdminOverridePanel';
@@ -111,6 +117,9 @@ export default function PWTestSession() {
     const [flags, setFlags] = useState([]);
     const [warningMsg, setWarningMsg] = useState('');
     const [warningOpen, setWarningOpen] = useState(false);
+
+    // Calculator state
+    const [calcOpen, setCalcOpen] = useState(false);
 
     // ─── Flag Handler (local only — NO database, NO evidence, NO termination) ───
     const logFlag = useCallback((flag) => {
@@ -294,7 +303,7 @@ export default function PWTestSession() {
     // RENDER: Pre-test checks (same as ExamSession)
     // ═══════════════════════════════════════════
     if (!preChecksComplete && !submitted) {
-        return <PreTestCheck demoMode={true} onComplete={() => setPreChecksComplete(true)} />;
+        return <PreTestCheck onComplete={() => setPreChecksComplete(true)} />;
     }
 
     // ═══════════════════════════════════════════
@@ -303,7 +312,7 @@ export default function PWTestSession() {
     if (submitted) {
         const totalScore = questions.reduce((acc, q) => {
             const ans = answers[q.id] || [];
-            const isCorrect = JSON.stringify(q.correct_answer?.sort()) === JSON.stringify(ans.sort());
+            const isCorrect = ans.length > 0 && JSON.stringify(q.correct_answer?.sort()) === JSON.stringify(ans.sort());
             return acc + (isCorrect ? q.marks : 0);
         }, 0);
 
@@ -358,7 +367,7 @@ export default function PWTestSession() {
     const isUrgent = timeLeft < 120;
 
     return (
-        <Box sx={{ display: 'flex', gap: 2, height: 'calc(100vh - 140px)' }}>
+        <Box sx={{ display: 'flex', gap: 2, height: '100vh', p: 2 }}>
             {/* Main Question Area */}
             <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                 {/* Timer Bar — identical to ExamSession */}
@@ -388,9 +397,23 @@ export default function PWTestSession() {
 
                 {/* Question Card — identical to ExamSession */}
                 <Card sx={{ flex: 1, overflow: 'auto' }}><CardContent sx={{ p: 3 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                         <Chip label={`Question ${currentQ + 1} of ${questions.length}`} size="small" />
-                        <Chip label={`${currentQuestion?.marks} marks`} size="small" color="primary" variant="outlined" />
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Chip label={`${currentQuestion?.marks} marks`} size="small" color="primary" variant="outlined" />
+                            <Tooltip title="Calculator">
+                                <IconButton
+                                    size="small"
+                                    onClick={() => setCalcOpen(true)}
+                                    sx={{
+                                        bgcolor: 'rgba(108,99,255,0.1)',
+                                        '&:hover': { bgcolor: 'rgba(108,99,255,0.2)' },
+                                    }}
+                                >
+                                    <Calculate sx={{ fontSize: 18, color: '#6C63FF' }} />
+                                </IconButton>
+                            </Tooltip>
+                        </Box>
                     </Box>
 
                     <Typography variant="h6" sx={{ mb: 3, lineHeight: 1.6 }}>
@@ -502,23 +525,30 @@ export default function PWTestSession() {
             />
 
             {/* ═══════════════════════════════════════════ */}
-            {/* PROCTORING MONITORS — identical to ExamSession */}
+            {/* PROCTORING MONITORS — floating & draggable  */}
+            {/* (IdentityMonitor removed for PW Test)       */}
             {/* ═══════════════════════════════════════════ */}
-            {!submitted && !disabledModules.includes('identity') && sharedStream && (
-                <IdentityMonitor active={!submitted} onStatusChange={logFlag} stream={sharedStream} demoMode />
-            )}
             {!submitted && !disabledModules.includes('device') && (
                 <DeviceMonitor active={!submitted} onFlag={logFlag} />
             )}
             {!submitted && !disabledModules.includes('behavior') && sharedStream && (
-                <VisionBehaviorMonitor active={!submitted} onFlag={logFlag} stream={sharedStream} />
+                <FloatingPanel title="Vision AI" defaultPosition={{ x: window.innerWidth - 310, y: window.innerHeight - 380 }} width={280}>
+                    <VisionBehaviorMonitor active={!submitted} onFlag={logFlag} stream={sharedStream} />
+                </FloatingPanel>
             )}
             {!submitted && !disabledModules.includes('audio') && sharedStream && (
-                <AudioIntelligence active={!submitted} onFlag={logFlag} stream={sharedStream} />
+                <FloatingPanel title="Audio Intelligence" defaultPosition={{ x: window.innerWidth - 330, y: window.innerHeight - 200 }} width={300}>
+                    <AudioIntelligence active={!submitted} onFlag={logFlag} stream={sharedStream} />
+                </FloatingPanel>
             )}
             {!submitted && !disabledModules.includes('network') && (
-                <NetworkMonitor active={!submitted} onFlag={logFlag} />
+                <FloatingPanel title="System Monitor" defaultPosition={{ x: 16, y: window.innerHeight - 300 }} width={280}>
+                    <NetworkMonitor active={!submitted} onFlag={logFlag} />
+                </FloatingPanel>
             )}
+
+            {/* In-App Calculator */}
+            <ExamCalculator open={calcOpen} onClose={() => setCalcOpen(false)} />
 
             {/* Warning Toast — same as ExamSession */}
             <Snackbar

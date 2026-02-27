@@ -9,7 +9,7 @@ import {
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
 import useAuthStore from '../store/authStore';
-import { extractEmbedding, calculateSimilarity } from '../lib/faceProcessing';
+import { detectFaces, alignFace, extractEmbedding, cosineSimilarity } from '../lib/faceProcessing';
 
 // LocalStorage key for PW Test demo face embedding
 const PW_TEST_FACE_KEY = 'pw_test_face_embedding';
@@ -62,41 +62,29 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                 setModelsLoaded(true);
                 setIdentityStatus('Models Loaded');
 
-                if (demoMode) {
-                    // Demo mode: load from localStorage
-                    try {
-                        const stored = localStorage.getItem(PW_TEST_FACE_KEY);
-                        if (stored) {
-                            const parsed = JSON.parse(stored);
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                                setRegisteredEmbedding(new Float32Array(parsed));
-                                setIdentityStatus('Local Face Loaded');
-                            } else {
-                                setIdentityStatus('No face registered yet');
-                            }
-                        } else {
-                            setIdentityStatus('No face registered yet');
-                        }
-                    } catch {
+                // Fetch registered face embedding from Supabase
+                try {
+                    const { data: reg, error: regErr } = await supabase
+                        .from('face_registrations')
+                        .select('centroid_embedding')
+                        .eq('user_id', user?.id)
+                        .maybeSingle();
+
+                    if (regErr) {
+                        console.warn('[PreTest] Supabase face fetch error:', regErr);
+                        setIdentityStatus('Could not fetch registration');
+                    } else if (reg?.centroid_embedding) {
+                        const emb = new Float32Array(reg.centroid_embedding);
+                        setRegisteredEmbedding(emb);
+                        setIdentityStatus('Face Loaded from DB ✓');
+                        console.log('[PreTest] Loaded centroid embedding, length:', emb.length);
+                    } else {
                         setIdentityStatus('No face registered yet');
+                        console.log('[PreTest] No centroid_embedding found for user:', user?.id);
                     }
-                } else {
-                    // Production mode: fetch from Supabase
-                    try {
-                        const { data: reg } = await supabase
-                            .from('face_registrations')
-                            .select('embeddings')
-                            .eq('user_id', user?.id)
-                            .single();
-                        if (reg) {
-                            setRegisteredEmbedding(new Float32Array(reg.embeddings));
-                        } else {
-                            setIdentityStatus('No registration found');
-                        }
-                    } catch (err) {
-                        console.warn('[PreTest] Supabase face fetch error:', err.message);
-                        setIdentityStatus('No registration found');
-                    }
+                } catch (err) {
+                    console.warn('[PreTest] Supabase face fetch exception:', err.message);
+                    setIdentityStatus('No registration found');
                 }
             } catch (err) {
                 console.error(err);
@@ -107,7 +95,7 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
         return () => {
             if (verifyInterval.current) clearInterval(verifyInterval.current);
         };
-    }, [demoMode, user?.id]);
+    }, [user?.id]);
 
     // Step 0 Auto-advance
     useEffect(() => {
@@ -202,11 +190,15 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                 verifyInterval.current = setInterval(async () => {
                     if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
                     try {
-                        const liveEmbedding = await extractEmbedding(videoRef.current);
-                        const score = calculateSimilarity(registeredEmbedding, liveEmbedding);
+                        const faces = await detectFaces(videoRef.current);
+                        if (!faces || faces.length === 0 || faces[0].score < 0.5) return;
+
+                        const aligned = alignFace(videoRef.current, faces[0].landmarks);
+                        const liveEmbedding = await extractEmbedding(aligned);
+                        const score = cosineSimilarity(registeredEmbedding, liveEmbedding);
                         setIdentityScore(score);
 
-                        if (score >= 0.9) {
+                        if (score >= 0.60) {
                             setIdentityStatus('Verified ✓');
                             setChecks(prev => ({ ...prev, camera: 'success' }));
                         } else {
@@ -217,8 +209,8 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                         // Face not found in frame
                     }
                 }, 1000);
-            } else if (!registeredEmbedding && demoMode) {
-                // Demo mode with no registered face — just check camera works
+            } else if (!registeredEmbedding) {
+                // No face registered — just check camera works
                 setIdentityStatus('Camera OK (no face registered)');
                 setChecks(prev => ({ ...prev, camera: 'success' }));
             }
@@ -238,7 +230,11 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
         setFaceRegistering(true);
         setFaceRegError('');
         try {
-            const embedding = await extractEmbedding(videoRef.current);
+            const faces = await detectFaces(videoRef.current);
+            if (!faces || faces.length === 0 || faces[0].score < 0.5) throw new Error();
+
+            const aligned = alignFace(videoRef.current, faces[0].landmarks);
+            const embedding = await extractEmbedding(aligned);
             const embeddingArray = Array.from(embedding);
             localStorage.setItem(PW_TEST_FACE_KEY, JSON.stringify(embeddingArray));
             setRegisteredEmbedding(new Float32Array(embeddingArray));
@@ -250,10 +246,14 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
             verifyInterval.current = setInterval(async () => {
                 if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) return;
                 try {
-                    const liveEmbedding = await extractEmbedding(videoRef.current);
-                    const score = calculateSimilarity(new Float32Array(embeddingArray), liveEmbedding);
+                    const liveFaces = await detectFaces(videoRef.current);
+                    if (!liveFaces || liveFaces.length === 0 || liveFaces[0].score < 0.5) return;
+
+                    const liveAligned = alignFace(videoRef.current, liveFaces[0].landmarks);
+                    const liveEmbedding = await extractEmbedding(liveAligned);
+                    const score = cosineSimilarity(new Float32Array(embeddingArray), liveEmbedding);
                     setIdentityScore(score);
-                    if (score >= 0.9) {
+                    if (score >= 0.60) {
                         setIdentityStatus('Verified ✓');
                         setChecks(prev => ({ ...prev, camera: 'success' }));
                     } else {
@@ -428,9 +428,7 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                 return (
                     <Box sx={{ textAlign: 'center' }}>
                         <Typography gutterBottom>
-                            {demoMode
-                                ? 'Register & verify your face for the demo session.'
-                                : 'We need to verify your identity before proceeding.'}
+                            {'We need to verify your identity before proceeding.'}
                         </Typography>
                         <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mb: 2 }}>
                             {!stream && (
@@ -452,7 +450,7 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                                     </Box>
                                     <Box>
                                         <Typography variant="caption" display="block">Match Score</Typography>
-                                        <Typography variant="h6" color={identityScore >= 0.9 ? 'lightgreen' : 'orange'}>
+                                        <Typography variant="h6" color={identityScore >= 0.60 ? 'lightgreen' : 'orange'}>
                                             {(identityScore * 100).toFixed(0)}%
                                         </Typography>
                                     </Box>
@@ -460,56 +458,23 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                                 <LinearProgress
                                     variant="determinate"
                                     value={identityScore * 100}
-                                    color={identityScore >= 0.9 ? "success" : "warning"}
+                                    color={identityScore >= 0.60 ? "success" : "warning"}
                                     sx={{ mt: 1 }}
                                 />
-                                {identityScore < 0.9 && stream && registeredEmbedding && (
+                                {identityScore < 0.60 && stream && registeredEmbedding && (
                                     <Typography variant="caption" sx={{ mt: 1, display: 'block', color: '#ffb74d' }}>
-                                        Need &gt; 90% match to proceed. Look at the camera.
+                                        Need &gt; 60% match to proceed. Look at the camera.
                                     </Typography>
                                 )}
                             </Box>
                         </Box>
 
-                        {/* Demo Mode: Register / Clear Face Buttons */}
-                        {demoMode && stream && (
-                            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center', gap: 2 }}>
-                                {!registeredEmbedding ? (
-                                    <Button
-                                        variant="contained"
-                                        color="primary"
-                                        onClick={registerFaceFromCamera}
-                                        disabled={faceRegistering}
-                                        startIcon={faceRegistering ? <CircularProgress size={16} /> : <CameraAlt />}
-                                    >
-                                        {faceRegistering ? 'Capturing...' : 'Register Face'}
-                                    </Button>
-                                ) : (
-                                    <Button
-                                        variant="outlined"
-                                        color="error"
-                                        onClick={clearDemoFace}
-                                        startIcon={<Delete />}
-                                        size="small"
-                                    >
-                                        Clear & Re-register
-                                    </Button>
-                                )}
-                            </Box>
-                        )}
-
                         {/* Error messages */}
                         {faceRegError && <Alert severity="warning" sx={{ mt: 2 }}>{faceRegError}</Alert>}
 
                         {/* No registration message */}
-                        {!registeredEmbedding && modelsLoaded && !demoMode && (
-                            <Alert severity="error" sx={{ mt: 2 }}>No face registration found! Please contact admin.</Alert>
-                        )}
-                        {!registeredEmbedding && modelsLoaded && demoMode && stream && (
-                            <Alert severity="info" sx={{ mt: 2 }}>
-                                Click "Register Face" to capture your face for this demo session.
-                                Your face data is stored locally only.
-                            </Alert>
+                        {!registeredEmbedding && modelsLoaded && (
+                            <Alert severity="error" sx={{ mt: 2 }}>No face registration found! Please register your face from the Student Dashboard first.</Alert>
                         )}
                     </Box>
                 );
@@ -553,11 +518,7 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
                     <Box sx={{ textAlign: 'center', py: 4 }}>
                         <CheckCircle sx={{ fontSize: 60, color: 'success.main', mb: 2 }} />
                         <Typography variant="h5">You are ready.</Typography>
-                        {demoMode && (
-                            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                                This is a demo session — no data is sent to any server.
-                            </Typography>
-                        )}
+
                     </Box>
                 );
             default: return null;
@@ -568,7 +529,7 @@ export default function PreTestCheck({ onComplete, demoMode = false }) {
         <Card sx={{ maxWidth: 800, mx: 'auto', mt: 4 }}>
             <CardContent sx={{ p: 4 }}>
                 <Typography variant="h5" fontWeight={700} align="center" gutterBottom>
-                    {demoMode ? 'PW Test — System & Identity Check' : 'System & Identity Check'}
+                    {'System & Identity Check'}
                 </Typography>
                 <Stepper activeStep={activeStep} alternativeLabel sx={{ mb: 4 }}>
                     {steps.map(label => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}

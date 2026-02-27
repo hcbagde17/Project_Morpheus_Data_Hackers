@@ -1,33 +1,54 @@
-import * as faceapi from 'face-api.js';
-
-const MODEL_URL = '/models/face-api';
-
-let modelsLoaded = false;
+import * as ort from 'onnxruntime-web';
 
 /**
- * Load face-api.js models (SSD MobileNet + Landmarks + Recognition)
+ * aiModelLoader.js — ONNX Runtime Model Loader
+ *
+ * Loads three ONNX models for the ArcFace facial recognition pipeline:
+ *   - det_10g.onnx     → SCRFD-10G face detector
+ *   - w600k_r50.onnx   → ArcFace R50 512D face embeddings
+ *   - MiniFASNetV2.onnx → Anti-spoof liveness check
+ *
+ * WASM runtime files are loaded from CDN to avoid Vite bundling conflicts.
+ * Model .onnx files are served locally from public/models/arcface/.
  */
-export const loadAIModels = async () => {
-    if (modelsLoaded) return;
-    try {
-        console.log('Loading face-api.js models...');
-        await Promise.all([
-            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        ]);
-        modelsLoaded = true;
-        console.log('All face-api.js models loaded successfully');
-    } catch (err) {
-        console.error('Failed to load face-api.js models:', err);
-        throw err;
-    }
+
+const CDN_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+
+const MODELS = {
+    detector: null,
+    recognizer: null,
+    antiSpoof: null,
 };
 
-export const getModels = () => ({
-    detector: modelsLoaded ? true : null,
-    recognition: modelsLoaded ? true : null,
-});
+let loaded = false;
 
-export const isCVLoaded = () => true; // face-api.js doesn't need OpenCV
-export const loadOpenCV = () => Promise.resolve(); // no-op
+export const loadAIModels = async () => {
+    if (loaded) return;
+
+    // Configure ONNX Runtime to use CDN for WASM files
+    ort.env.wasm.wasmPaths = CDN_BASE;
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.simd = true;
+
+    console.log('[AI] Loading ONNX models via CDN WASM runtime...');
+
+    const opts = { executionProviders: ['wasm'] };
+
+    const [detector, recognizer, antiSpoof] = await Promise.all([
+        ort.InferenceSession.create('/models/arcface/det_10g.onnx', opts),
+        ort.InferenceSession.create('/models/arcface/w600k_r50.onnx', opts),
+        ort.InferenceSession.create('/models/arcface/MiniFASNetV2.onnx', opts),
+    ]);
+
+    MODELS.detector = detector;
+    MODELS.recognizer = recognizer;
+    MODELS.antiSpoof = antiSpoof;
+    loaded = true;
+
+    console.log('[AI] ✅ All 3 ONNX models loaded successfully');
+    console.log('[AI]   Detector inputs:', detector.inputNames, '→ outputs:', detector.outputNames);
+    console.log('[AI]   Recognizer inputs:', recognizer.inputNames, '→ outputs:', recognizer.outputNames);
+    console.log('[AI]   AntiSpoof inputs:', antiSpoof.inputNames, '→ outputs:', antiSpoof.outputNames);
+};
+
+export const getModels = () => MODELS;

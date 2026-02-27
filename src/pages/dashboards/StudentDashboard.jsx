@@ -34,12 +34,12 @@ export default function StudentDashboard() {
     const loadData = async () => {
         try {
             // 1. Check Face Registration
-            const { data: faceReg } = await supabase
+            const { data: faceReg, error: faceErr } = await supabase
                 .from('face_registrations')
-                .select('id')
+                .select('id, centroid_embedding')
                 .eq('user_id', user.id)
-                .single();
-            setFaceRegistered(!!faceReg);
+                .maybeSingle();
+            setFaceRegistered(!!(faceReg?.centroid_embedding));
 
             // 2. Get Enrollments & Upcoming Tests
             const { data: enrollments } = await supabase

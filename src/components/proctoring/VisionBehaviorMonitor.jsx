@@ -17,7 +17,7 @@ import { visionIntelligence } from '../../lib/visionIntelligence';
  * - Expandable debug breakdown (5 sub-scores + raw metrics)
  * - Mini camera preview (mirrored)
  */
-export default function VisionBehaviorMonitor({ active, onFlag, stream: sharedStream }) {
+export default function VisionBehaviorMonitor({ active, onFlag, stream: sharedStream, hidden = false }) {
     const [status, setStatus] = useState('initializing'); // initializing | active | error
     const [data, setData] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -133,19 +133,21 @@ export default function VisionBehaviorMonitor({ active, onFlag, stream: sharedSt
         return null;
     };
 
+    // Hidden mode: render only the video element for detection, no UI
+    if (hidden) {
+        return (
+            <video
+                ref={videoRef}
+                style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+                muted
+                playsInline
+            />
+        );
+    }
+
     return (
         <Box sx={{
-            position: 'fixed',
-            bottom: 16,
-            right: 330, // Positioned left of Audio panel
-            width: 280,
-            bgcolor: 'background.paper',
-            borderRadius: 2,
-            boxShadow: 3,
             p: 2,
-            zIndex: 9999,
-            border: '1px solid',
-            borderColor: score > 0.60 ? 'error.main' : faceLost ? 'warning.main' : 'divider',
             transition: 'border-color 0.3s ease',
         }}>
             {/* Header */}

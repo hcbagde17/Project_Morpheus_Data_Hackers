@@ -1,58 +1,110 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Typography, Alert } from '@mui/material';
 import { Warning } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../store/authStore';
 
-export default function IdentityMonitor({ active, onStatusChange, embeddingOverride, stream: sharedStream, demoMode }) {
+/**
+ * IdentityMonitor - Validates face continuously using ArcFace pipeline
+ * 
+ * Flow:
+ * 1. Load user's centroid from DB
+ * 2. Every 7 seconds:
+ *    a. Detect face (SCRFD)
+ *    b. Check Liveness (MiniFASNetV2)
+ *    c. Extract Embedding (ArcFace)
+ *    d. Compare to Centroid
+ * 3. Flag logic on mismatch or missing/spoof
+ */
+
+const VERIFY_INTERVAL = 7000;    // ms between checks
+const SIMILARITY_THRESHOLD = 0.60; // ArcFace cosine threshold (60% match)
+const SPOOF_THRESHOLD = 0.75;      // MiniFASNetV2 spoof probability
+const MISMATCH_FOR_FLAG = 3;       // consecutive mismatches → ORANGE
+const MISSING_FOR_FLAG = 3;        // consecutive missing → flag
+const MULTIPLE_FOR_FLAG = 2;       // consecutive multiple faces → flag
+
+export default function IdentityMonitor({ active, onStatusChange, embeddingOverride, stream: sharedStream, hidden = false }) {
     const { user } = useAuthStore();
     const videoRef = useRef(null);
     const streamRef = useRef(null);
     const [stream, setStream] = useState(null);
-    const [registeredEmbedding, setRegisteredEmbedding] = useState(null);
-    const [status, setStatus] = useState('initializing'); // initializing, active, warning, error
-    const [warningMsg, setWarningMsg] = useState('');
-    const lastCheckTime = useRef(0);
-    const [debugInfo, setDebugInfo] = useState('');
+    const [centroid, setCentroid] = useState(null);
+    const [status, setStatus] = useState('initializing'); // initializing, active, warning, error, legacy
+    const [lastSimilarity, setLastSimilarity] = useState(null);
+    const [lastSpoof, setLastSpoof] = useState(null);
 
-    // Load embedding (separate from camera lifecycle)
+    // Consecutive violation counters
+    const mismatchCount = useRef(0);
+    const missingCount = useRef(0);
+    const multipleCount = useRef(0);
+
+    const [currentFlagId, setCurrentFlagId] = useState(null);
+    const intervalRef = useRef(null);
+    const checkingRef = useRef(false);
+
+    // ── Load Centroid ────────────────────────────────────────────────────────
+
     useEffect(() => {
         if (embeddingOverride) {
-            setRegisteredEmbedding(embeddingOverride);
-        } else if (demoMode) {
-            // In demo mode, load from localStorage
-            try {
-                const stored = localStorage.getItem('pw_test_face_embedding');
-                if (stored) {
-                    setRegisteredEmbedding(JSON.parse(stored));
-                    console.log('[IdentityMonitor] Loaded face embedding from localStorage');
-                } else {
-                    console.warn('[IdentityMonitor] No local face embedding found');
-                }
-            } catch (err) {
-                console.error('[IdentityMonitor] Failed to load local embedding:', err);
-            }
+            setCentroid(embeddingOverride);
+            setStatus('active');
         } else {
-            loadRegistration();
+            loadCentroid();
         }
-    }, [embeddingOverride, demoMode]);
+    }, [embeddingOverride]);
 
-    // Camera lifecycle
+    const loadCentroid = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('face_registrations')
+                .select('centroid_embedding, embedding_version')
+                .eq('user_id', user.id)
+                .single();
+
+            if (error || !data) {
+                console.warn('[IdentityMonitor] No registration found');
+                setStatus('active'); // Will just do presence check
+                return;
+            }
+
+            if (data.embedding_version && !data.embedding_version.startsWith('arcface')) {
+                console.warn('[IdentityMonitor] Legacy 128D embedding detected');
+                setStatus('legacy');
+                return;
+            }
+
+            setCentroid(new Float32Array(data.centroid_embedding));
+            console.log('[IdentityMonitor] Centroid loaded (512D ArcFace)');
+            setStatus('active');
+        } catch (err) {
+            console.error('[IdentityMonitor] Failed to load centroid:', err);
+            setStatus('error');
+        }
+    };
+
+    // ── Camera Lifecycle ─────────────────────────────────────────────────────
+
     useEffect(() => {
+        if (!active) {
+            stopCamera();
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            return;
+        }
+
         if (sharedStream) {
-            // Use shared stream from parent — don't acquire our own
             streamRef.current = sharedStream;
             setStream(sharedStream);
-            setStatus('active');
         } else {
             startCamera();
         }
-        return () => {
-            if (!sharedStream) stopCamera(); // Only stop if we own the stream
-        };
-    }, [sharedStream]);
 
-    // Connect stream to video element whenever either changes
+        return () => {
+            if (!sharedStream) stopCamera();
+            if (intervalRef.current) clearInterval(intervalRef.current);
+        };
+    }, [sharedStream, active]);
+
     useEffect(() => {
         if (stream && videoRef.current) {
             videoRef.current.srcObject = stream;
@@ -60,169 +112,259 @@ export default function IdentityMonitor({ active, onStatusChange, embeddingOverr
         }
     }, [stream]);
 
-    const loadRegistration = async () => {
-        try {
-            const { data, error } = await supabase
-                .from('face_registrations')
-                .select('embeddings')
-                .eq('user_id', user.id)
-                .single();
-
-            if (error || !data) {
-                console.warn("No face registration found for user");
-                return;
-            }
-            setRegisteredEmbedding(data.embeddings);
-        } catch (err) {
-            console.error("Failed to load registration", err);
-        }
-    };
-
     const startCamera = async () => {
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: { width: 320, height: 240, frameRate: 15 }
+            const ms = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, frameRate: 15 }
             });
-            streamRef.current = mediaStream;
-            setStream(mediaStream);
-            setStatus('active');
-        } catch (err) {
-            console.error(err);
+            streamRef.current = ms;
+            setStream(ms);
+        } catch {
             setStatus('error');
-            onStatusChange?.({ type: 'DEVICE_ERROR', message: 'Camera access failed' });
+            triggerFlag('DEVICE_ERROR', 'Camera access failed', 'high');
         }
     };
 
     const stopCamera = () => {
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-            setStream(null);
-        }
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+        setStream(null);
     };
 
-    // Proctoring Loop
-    useEffect(() => {
-        if (!active || !stream || !videoRef.current) return;
+    // ── Verification Loop ────────────────────────────────────────────────────
 
-        let animationId;
-        const CHECK_INTERVAL = 2000; // Check every 2 seconds
+    const verify = useCallback(async () => {
+        if (!videoRef.current || videoRef.current.readyState < 2 || status === 'legacy' || checkingRef.current) return;
 
-        // Initialize missing count ref if not exists
-        const missingCountRef = { current: 0 };
-        const MISSING_THRESHOLD = 3; // Tolerate 3 consecutive checks (approx 6 seconds)
+        checkingRef.current = true;
 
-        const checkLoop = async (timestamp) => {
-            if (timestamp - lastCheckTime.current >= CHECK_INTERVAL) {
-                try {
-                    const { detectFaces, extractEmbedding, calculateSimilarity } = await import('../../lib/faceProcessing');
+        try {
+            const {
+                detectFaces, alignFace, extractEmbedding,
+                checkLiveness, cosineSimilarity
+            } = await import('../../lib/faceProcessing');
 
-                    if (videoRef.current && videoRef.current.readyState === 4) {
-                        const faces = await detectFaces(videoRef.current);
+            // 1. Detect faces
+            const faces = await detectFaces(videoRef.current);
 
-                        // 1. Presence Check
-                        if (!faces || faces.length === 0) {
-                            missingCountRef.current++;
-                            if (missingCountRef.current >= MISSING_THRESHOLD) {
-                                handleFlag('MISSING', 'User not detected in frame.', 'high');
-                            } else {
-                                console.log(`Face missing frame ${missingCountRef.current}/${MISSING_THRESHOLD}`);
-                            }
-                        }
-                        else {
-                            missingCountRef.current = 0; // Reset on face found
-
-                            // 2. Multi-Face Check
-                            if (faces.length > 1) {
-                                handleFlag('MULTIPLE_FACES', 'Multiple people detected in frame.', 'high');
-                            }
-                            // 3. Identity Check
-                            else {
-                                const face = faces[0];
-                                // Only run recognition if we have a registered embedding
-                                if (registeredEmbedding) {
-                                    // Extract embedding only if face quality is decent
-                                    // Lowered threshold to 0.7 to tolerate mouth opening/expressions
-                                    if (face.score > 0.7) {
-                                        const currentEmbedding = await extractEmbedding(videoRef.current);
-                                        const similarity = calculateSimilarity(registeredEmbedding, currentEmbedding);
-
-                                        setDebugInfo(`Match: ${(similarity * 100).toFixed(1)}%`);
-
-                                        if (similarity < 0.7) {
-                                            handleFlag('IMPERSONATION', `Identity verification failed. Match: ${(similarity * 100).toFixed(0)}%`, 'high');
-                                        } else {
-                                            clearFlag();
-                                        }
-                                    }
-                                } else {
-                                    clearFlag(); // No registration, just presence check passed
-                                }
-                            }
-                        }
-                    }
-                } catch (err) {
-                    console.warn("Proctor loop error", err);
+            // ── Face Missing ─────────────────────────────────────────────────
+            if (!faces || faces.length === 0) {
+                missingCount.current++;
+                mismatchCount.current = 0;
+                if (missingCount.current >= MISSING_FOR_FLAG) {
+                    triggerFlag('MISSING', 'Student not detected in frame', 'medium');
                 }
-                lastCheckTime.current = timestamp;
+                setStatus('warning');
+                checkingRef.current = false;
+                return;
             }
-            animationId = requestAnimationFrame(checkLoop);
-        };
+            missingCount.current = 0;
 
-        animationId = requestAnimationFrame(checkLoop);
-        return () => cancelAnimationFrame(animationId);
-    }, [active, stream, registeredEmbedding]);
+            // ── Multiple Faces ───────────────────────────────────────────────
+            if (faces.length > 1) {
+                multipleCount.current++;
+                if (multipleCount.current >= MULTIPLE_FOR_FLAG) {
+                    triggerFlag('MULTIPLE_FACES', `${faces.length} faces detected — possible unauthorized person`, 'high');
+                }
+                setStatus('warning');
+                checkingRef.current = false;
+                return;
+            }
+            multipleCount.current = 0;
 
-    const handleFlag = (type, msg, severity) => {
-        // Debounce: Only notify if status changed or message changed
-        if (status !== 'warning' || warningMsg !== msg) {
-            setStatus('warning');
-            setWarningMsg(msg);
-            onStatusChange?.({ type, message: msg, severity, timestamp: new Date() });
+            const face = faces[0];
+            if (face.score < 0.5) {
+                checkingRef.current = false;
+                return; // Low confidence detection — skip
+            }
+
+            // 2. Align face to 112×112
+            const aligned = alignFace(videoRef.current, face.landmarks);
+
+            // 3. Anti-Spoof gate
+            const spoofProb = await checkLiveness(aligned);
+            setLastSpoof(spoofProb);
+
+            if (spoofProb > SPOOF_THRESHOLD) {
+                triggerFlag('SPOOF_DETECTED', `Liveness check failed — possible photo/screen attack (${(spoofProb * 100).toFixed(0)}% spoof probability)`, 'high');
+                setStatus('warning');
+                checkingRef.current = false;
+                return;
+            }
+
+            // 4. Extract ArcFace embedding
+            if (!centroid) {
+                setStatus('active'); // No registration — presence check only
+                clearFlag();
+                checkingRef.current = false;
+                return;
+            }
+
+            const embedding = await extractEmbedding(aligned);
+            const similarity = cosineSimilarity(centroid, embedding);
+            setLastSimilarity(similarity);
+
+            // 5. Escalation logic
+            if (similarity < SIMILARITY_THRESHOLD) {
+                mismatchCount.current++;
+
+                // Immediate red flag if spoof + mismatch
+                if (spoofProb > 0.5 && similarity < 0.35) {
+                    triggerFlag(
+                        'IMPERSONATION',
+                        `Identity mismatch with spoof indicators (match: ${(similarity * 100).toFixed(0)}%)`,
+                        'high'
+                    );
+                } else if (mismatchCount.current >= MISMATCH_FOR_FLAG) {
+                    triggerFlag(
+                        'IDENTITY_MISMATCH',
+                        `Unrecognized face detected (match: ${(similarity * 100).toFixed(0)}%)`,
+                        'high'
+                    );
+                }
+                setStatus('warning');
+                checkingRef.current = false;
+                return;
+            }
+
+            // Match successful
+            mismatchCount.current = 0;
+            setStatus('active');
+            clearFlag();
+
+        } catch (err) {
+            console.error('[IdentityMonitor] Verification error:', err);
         }
+
+        checkingRef.current = false;
+    }, [centroid, status]);
+
+    useEffect(() => {
+        if (!active || status === 'legacy') return;
+
+        intervalRef.current = setInterval(verify, VERIFY_INTERVAL);
+        return () => clearInterval(intervalRef.current);
+    }, [active, verify, status]);
+
+    // ── Flag Reporting ───────────────────────────────────────────────────────
+
+    const triggerFlag = (type, message, severity) => {
+        if (currentFlagId) return; // Already flagged for this session roughly
+
+        const localId = `ID_${Date.now()}`;
+        setCurrentFlagId(localId);
+        onStatusChange?.({ type, message, severity, localId, module: 'IdentityMonitor' });
     };
 
     const clearFlag = () => {
-        if (status === 'warning') {
-            setStatus('active');
-            setWarningMsg('');
-            // Optional: notify 'CLEAR' status
+        if (currentFlagId) {
+            onStatusChange?.({ type: 'RESOLVED', localId: currentFlagId });
+            setCurrentFlagId(null);
         }
     };
 
+    // ── Render ───────────────────────────────────────────────────────────────
+
     if (!active) return null;
+
+    // Hidden mode: run all verification logic but render only the hidden video element
+    if (hidden) {
+        return (
+            <video
+                ref={videoRef}
+                muted
+                playsInline
+                style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+            />
+        );
+    }
+
+    if (status === 'legacy') {
+        return (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+                Legacy face registration detected. Verification disabled. Please re-register your face from the dashboard before taking exams.
+            </Alert>
+        );
+    }
 
     return (
         <Box sx={{
-            position: 'fixed', top: 80, right: 20,
-            width: 180, bgcolor: 'background.paper',
-            boxShadow: 3, borderRadius: 2, overflow: 'hidden',
-            border: status === 'warning' ? '2px solid #ff4d4f' : '1px solid #ddd',
-            zIndex: 9999
+            border: theme => `1px solid ${theme.palette.divider}`,
+            borderRadius: 2,
+            p: 2,
+            bgcolor: 'background.paper',
+            position: 'relative',
+            overflow: 'hidden'
         }}>
-            <Box sx={{ position: 'relative', height: 135, bgcolor: '#000' }}>
-                <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-                {status === 'warning' && (
-                    <Box sx={{
-                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                        bgcolor: 'rgba(255, 0, 0, 0.3)', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center'
+            <Typography variant="overline" color="text.secondary" fontWeight="bold">
+                Identity Monitor (ArcFace 512D)
+            </Typography>
+
+            <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+                <Box sx={{
+                    width: 120, height: 90, bgcolor: 'black', borderRadius: 1, overflow: 'hidden',
+                    position: 'relative'
+                }}>
+                    <video
+                        ref={videoRef}
+                        muted
+                        playsInline
+                        style={{
+                            width: '100%', height: '100%', objectFit: 'cover',
+                            transform: 'scaleX(-1)'
+                        }}
+                    />
+                </Box>
+
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    <Typography variant="body2" sx={{
+                        color: status === 'active' ? 'success.main' :
+                            status === 'warning' ? 'error.main' : 'text.secondary',
+                        display: 'flex', alignItems: 'center', gap: 1, fontWeight: 'medium'
                     }}>
-                        <Warning color="error" fontSize="large" />
-                    </Box>
-                )}
-            </Box>
-            <Box sx={{ p: 1, bgcolor: status === 'warning' ? '#fff2f0' : '#fff' }}>
-                <Typography variant="caption" display="block" color={status === 'warning' ? 'error' : 'text.secondary'} sx={{ lineHeight: 1.2, fontWeight: 600 }}>
-                    {status === 'warning' ? warningMsg : 'Proctoring Active'}
-                </Typography>
-                {/* <Typography variant="caption" sx={{ fontSize: 9, color: '#999' }}>{debugInfo}</Typography> */}
+                        {status === 'active' && '✓ Verified Presence'}
+                        {status === 'warning' && <><Warning fontSize="small" /> Verification Issue</>}
+                        {status === 'initializing' && 'Initializing AI...'}
+                    </Typography>
+
+                    {lastSimilarity !== null && (
+                        <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ width: 80 }}>
+                                Match Score:
+                            </Typography>
+                            <Box sx={{ flex: 1, height: 4, bgcolor: 'action.hover', borderRadius: 2, overflow: 'hidden' }}>
+                                <Box sx={{
+                                    width: `${Math.max(0, lastSimilarity) * 100}%`,
+                                    height: '100%',
+                                    bgcolor: lastSimilarity >= SIMILARITY_THRESHOLD ? '#52c41a' : '#ff4d4f',
+                                    transition: 'all 0.3s ease'
+                                }} />
+                            </Box>
+                            <Typography variant="caption" fontWeight="bold">
+                                {(lastSimilarity * 100).toFixed(0)}%
+                            </Typography>
+                        </Box>
+                    )}
+
+                    {lastSpoof !== null && (
+                        <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ width: 80 }}>
+                                Spoof Check:
+                            </Typography>
+                            <Box sx={{ flex: 1, height: 4, bgcolor: 'action.hover', borderRadius: 2, overflow: 'hidden' }}>
+                                <Box sx={{
+                                    width: `${lastSpoof * 100}%`,
+                                    height: '100%',
+                                    bgcolor: lastSpoof > SPOOF_THRESHOLD ? '#ff4d4f' : '#faad14',
+                                    transition: 'all 0.3s ease'
+                                }} />
+                            </Box>
+                            <Typography variant="caption" fontWeight="bold">
+                                {(lastSpoof * 100).toFixed(0)}%
+                            </Typography>
+                        </Box>
+                    )}
+                </Box>
             </Box>
         </Box>
     );

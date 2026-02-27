@@ -51,7 +51,7 @@ const CORRELATION_DEBOUNCE_MS = 2000;
 const CORRELATION_KEYSTROKE_RANGE_MS = 1000; // Network spike within 1s of keystroke = suspicious
 const CORRELATION_MAX_EVENTS = 5;
 
-export default function NetworkMonitor({ active, onFlag }) {
+export default function NetworkMonitor({ active, onFlag, hidden = false }) {
     const [riskData, setRiskData] = useState(null);
     const [finalScore, setFinalScore] = useState(0);
     const [correlationScore, setCorrelationScore] = useState(0);
@@ -207,19 +207,12 @@ export default function NetworkMonitor({ active, onFlag }) {
 
     const isCalibrating = riskData?.networkAnomaly?.isCalibrating ?? true;
 
+    // Hidden mode: run all logic but no visible UI
+    if (hidden) return null;
+
     return (
         <Box sx={{
-            position: 'fixed',
-            bottom: 16,
-            left: 16,
-            width: 280,
-            bgcolor: 'background.paper',
-            borderRadius: 2,
-            boxShadow: 3,
             p: 2,
-            zIndex: 9999,
-            border: '1px solid',
-            borderColor: finalScore > 0.40 ? (finalScore > 0.70 ? 'error.main' : 'warning.main') : 'divider',
             transition: 'border-color 0.3s ease',
         }}>
             {/* Header */}

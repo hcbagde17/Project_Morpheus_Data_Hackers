@@ -131,7 +131,7 @@ export default function StudentTestResult() {
     const correctCount = questions.filter(q => {
         const userAnsArray = answers[q.id]?.selected_answer || [];
         const correctArray = q.correct_answer || [];
-        return JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
+        return userAnsArray.length > 0 && JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
     }).length;
 
     const handleAIAdvisor = async () => {
@@ -146,7 +146,7 @@ export default function StudentTestResult() {
             questions.forEach((q, i) => {
                 const userAnsArray = answers[q.id]?.selected_answer || [];
                 const correctArray = q.correct_answer || [];
-                const isCorrect = JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
+                const isCorrect = userAnsArray.length > 0 && JSON.stringify(userAnsArray.sort()) === JSON.stringify(correctArray.sort());
                 const userAns = Array.isArray(userAnsArray) ? userAnsArray.join(', ') : userAnsArray;
                 const correctAns = Array.isArray(q.correct_answer) ? q.correct_answer.join(', ') : q.correct_answer;
 
