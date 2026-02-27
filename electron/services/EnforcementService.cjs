@@ -9,126 +9,6 @@ const {
 const koffi = require('koffi');
 
 // =============================================================================
-// DEFAULT BLACKLIST - All 57+ applications organized by category
-// =============================================================================
-const DEFAULT_BLACKLIST = {
-    // --- Web Browsers (17) ---
-    browsers: [
-        'chrome.exe',
-        'firefox.exe',
-        'msedge.exe',
-        'msedge_proxy.exe',
-        'safari.exe',
-        'opera.exe',
-        'brave.exe',
-        'vivaldi.exe',
-        'tor.exe',
-        'arc.exe',
-        'chromium.exe',
-        'waterfox.exe',
-        'palemoon.exe',
-        'maxthon.exe',
-        'ucbrowser.exe',
-        'browser.exe',           // Yandex Browser
-        'iexplore.exe',          // Internet Explorer
-    ],
-
-    // --- VPN Services (17) ---
-    vpn: [
-        'nordvpn.exe',
-        'nordvpn-service.exe',
-        'expressvpn.exe',
-        'expressvpnd.exe',
-        'surfshark.exe',
-        'protonvpn.exe',
-        'cyberghostvpn.exe',
-        'pia-client.exe',        // Private Internet Access
-        'ipvanish.exe',
-        'windscribe.exe',
-        'tunnelbear.exe',
-        'hss-update.exe',        // Hotspot Shield
-        'mullvad-vpn.exe',
-        'atlasvpn.exe',
-        'hide.me.exe',
-        'purevpn.exe',
-        'vyprvpn.exe',
-    ],
-
-    // --- Social / Communication ---
-    communication: [
-        'slack.exe',
-        'teams.exe',
-        'ms-teams.exe',
-        'skype.exe',
-        'zoom.exe',
-        'whatsapp.exe',
-        'whatsappdesktop.exe',
-        'whatsapp desktop.exe',  // Some versions use space
-        'telegram.exe',
-        'instagram.exe',
-        'snapchat.exe',
-        'discord.exe',
-        'signal.exe',
-    ],
-
-    // --- Remote Desktop & Access (6) ---
-    remote: [
-        'mstsc.exe',             // Windows RDP
-        'rdpclip.exe',
-        'teamviewer.exe',
-        'anydesk.exe',
-        'vncviewer.exe',
-        'remotepc.exe',
-    ],
-
-    // --- AI Assistant Apps (3) ---
-    ai: [
-        'chatgpt.exe',
-        'claude.exe',
-        'notion.exe',
-    ],
-
-    // --- Screen Recording (4) --- (SnippingTool EXCLUDED per user request)
-    recording: [
-        'obs64.exe',
-        'obs32.exe',
-        'sharex.exe',
-        'bandicam.exe',
-    ],
-
-    // --- Task Manager & System Tools (3) ---
-    system: [
-        'taskmgr.exe',
-        'procexp.exe',
-        'procexp64.exe',
-    ],
-
-    // --- Programming & Terminal (2) ---
-    // NOTE: cmd.exe, node.exe, powershell.exe, windowsterminal.exe REMOVED
-    //       (needed for dev server — killing them crashes the app)
-    programming: [
-        'python.exe',
-        'code.exe',
-    ],
-
-    // --- Utilities (3) ---
-    utilities: [
-        'notepad.exe',
-        'calculator.exe',
-        'calc.exe',
-    ],
-};
-
-// Build flat array from default categories
-function buildFlatBlacklist(categories = DEFAULT_BLACKLIST) {
-    const all = [];
-    for (const category of Object.values(categories)) {
-        all.push(...category);
-    }
-    return all;
-}
-
-// =============================================================================
 // ENFORCEMENT SERVICE CLASS
 // =============================================================================
 class EnforcementService {
@@ -139,12 +19,78 @@ class EnforcementService {
         this.hookCallback = null;
         this.intervals = [];
 
-        // Configurable blacklist (starts with defaults, can be overridden)
-        this.blacklist = buildFlatBlacklist();
-        // Admin whitelist (processes allowed despite being in blacklist)
+        // Blacklist is empty until loadBlacklistFromDB() fetches from Supabase.
+        // No hardcoded fallback — Supabase is the single source of truth.
+        this.blacklist = [];
         this.whitelist = [];
-        // Custom additions from admin
         this.customBlacklist = [];
+        this.dbLoaded = false;
+    }
+
+    // =========================================================================
+    // SUPABASE SYNC — Load blacklist from DB before exam
+    // =========================================================================
+
+    /**
+     * Fetch the active (non-whitelisted) blacklist from Supabase.
+     * Uses Node's native https — no extra dependency, no hardcoded fallback.
+     * If Supabase is unreachable, the blacklist stays empty and enforcement logs an error.
+     * @returns {Promise<void>}
+     */
+    async loadBlacklistFromDB() {
+        const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+        const key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+        if (!url || !key) {
+            console.error('[Enforcement] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY not set. Blacklist will be empty.');
+            return;
+        }
+
+        try {
+            const result = await new Promise((resolve, reject) => {
+                const https = require('https');
+                const apiUrl = new URL(`${url}/rest/v1/app_blacklist?select=process_name&is_whitelisted=eq.false`);
+
+                const options = {
+                    hostname: apiUrl.hostname,
+                    path: apiUrl.pathname + apiUrl.search,
+                    method: 'GET',
+                    headers: {
+                        'apikey': key,
+                        'Authorization': `Bearer ${key}`,
+                        'Content-Type': 'application/json',
+                    },
+                    timeout: 8000,
+                };
+
+                const req = https.request(options, (res) => {
+                    let body = '';
+                    res.on('data', chunk => { body += chunk; });
+                    res.on('end', () => {
+                        if (res.statusCode === 200) {
+                            resolve(JSON.parse(body));
+                        } else {
+                            reject(new Error(`HTTP ${res.statusCode}: ${body}`));
+                        }
+                    });
+                });
+
+                req.on('error', reject);
+                req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+                req.end();
+            });
+
+            if (Array.isArray(result) && result.length > 0) {
+                this.blacklist = result.map(r => r.process_name.toLowerCase());
+                this.dbLoaded = true;
+                console.log(`[Enforcement] Blacklist loaded from Supabase: ${this.blacklist.length} apps.`);
+            } else {
+                console.warn('[Enforcement] Supabase returned an empty blacklist. No apps will be blocked.');
+            }
+        } catch (err) {
+            console.error(`[Enforcement] Failed to load blacklist from Supabase: ${err.message}. Blacklist is empty.`);
+            // No fallback — blacklist stays as-is (empty on first load, or whatever was previously loaded)
+        }
     }
 
     // =========================================================================
@@ -240,6 +186,9 @@ class EnforcementService {
      * @returns {Promise<{killed: string[], failed: string[], total: number}>}
      */
     async preExamKill() {
+        console.log('[Enforcement] Syncing blacklist from Supabase before PRE-EXAM cleanup...');
+        await this.loadBlacklistFromDB();
+
         console.log('[Enforcement] Running PRE-EXAM process cleanup...');
         const si = require('systeminformation');
         const killed = [];
@@ -263,14 +212,14 @@ class EnforcementService {
         }
 
         const result = {
-            killed: [...new Set(killed)],   // Deduplicate (browsers have many processes)
+            killed: [...new Set(killed)],
             failed: [...new Set(failed)],
-            total: killed.length
+            total: killed.length,
+            source: this.dbLoaded ? 'supabase' : 'hardcoded_defaults',
         };
 
-        console.log(`[Enforcement] PRE-EXAM complete. Killed ${result.killed.length} unique apps, ${result.failed.length} failures.`);
+        console.log(`[Enforcement] PRE-EXAM complete. Killed ${result.killed.length} unique apps (source: ${result.source}).`);
 
-        // Notify renderer
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
             this.mainWindow.webContents.send('proctoring:violation', {
                 type: 'PRE_EXAM_CLEANUP',
@@ -287,8 +236,13 @@ class EnforcementService {
     // PHASE 2: DURING-EXAM ENFORCEMENT (Continuous)
     // =========================================================================
 
-    start() {
+    async start() {
         if (this.active) return;
+
+        // Refresh blacklist from Supabase before starting enforcement
+        console.log('[Enforcement] Syncing blacklist from Supabase before enforcement start...');
+        await this.loadBlacklistFromDB();
+
         console.log('[Enforcement] Starting DURING-EXAM enforcement...');
         this.active = true;
 

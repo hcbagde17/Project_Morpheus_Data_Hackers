@@ -66,6 +66,7 @@
     "koffi": "^2.15.1",
     "mermaid": "^10.9.0",
     "onnxruntime-web": "^1.25.0-dev.20260209-a3749f1353",
+    "pdfjs-dist": "^5.4.624",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.71.1",

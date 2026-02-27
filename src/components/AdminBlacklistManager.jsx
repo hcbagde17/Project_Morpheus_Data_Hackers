@@ -3,80 +3,105 @@ import {
     Box, Typography, TextField, Button, Switch, IconButton, Chip,
     Tabs, Tab, Dialog, DialogTitle, DialogContent, DialogActions,
     Card, CardContent, Alert, Snackbar, InputAdornment, Divider,
-    List, ListItem, ListItemText, ListItemSecondaryAction, CircularProgress
+    List, ListItem, ListItemText, ListItemSecondaryAction,
+    CircularProgress, Tooltip, Select, MenuItem, FormControl, InputLabel
 } from '@mui/material';
-import { Add, Delete, Search, Shield, Block, CheckCircle } from '@mui/icons-material';
+import { Add, Delete, Search, Shield, Block, CheckCircle, Refresh } from '@mui/icons-material';
+import { supabase } from '../lib/supabase';
 
-// Category display names and colors
+// Category display config — now includes all 11 categories
 const CATEGORY_CONFIG = {
-    browsers: { label: 'Browsers', color: '#2196F3' },
-    vpn: { label: 'VPN Services', color: '#FF5722' },
-    communication: { label: 'Communication', color: '#9C27B0' },
     remote: { label: 'Remote Desktop', color: '#F44336' },
-    ai: { label: 'AI Tools', color: '#E91E63' },
     recording: { label: 'Screen Recording', color: '#FF9800' },
+    virtual_machine: { label: 'Virtual Machines', color: '#9C27B0' },
+    communication: { label: 'Communication', color: '#673AB7' },
+    ai_notes: { label: 'AI & Notes', color: '#E91E63' },
+    browsers: { label: 'Browsers', color: '#2196F3' },
+    vpn: { label: 'VPN', color: '#FF5722' },
+    gaming: { label: 'Gaming', color: '#4CAF50' },
     system: { label: 'System Tools', color: '#607D8B' },
-    programming: { label: 'Programming', color: '#4CAF50' },
+    programming: { label: 'Programming', color: '#00BCD4' },
     utilities: { label: 'Utilities', color: '#795548' },
-    custom: { label: 'Custom', color: '#00BCD4' },
+    custom: { label: 'Custom', color: '#FFC107' },
 };
 
 export default function AdminBlacklistManager() {
-    const [blacklistByCategory, setBlacklistByCategory] = useState({});
-    const [whitelist, setWhitelist] = useState([]);
-    const [customApps, setCustomApps] = useState([]);
+    const [apps, setApps] = useState([]);
     const [activeTab, setActiveTab] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [addDialogOpen, setAddDialogOpen] = useState(false);
     const [newApp, setNewApp] = useState({ name: '', displayName: '', category: 'custom' });
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(null);   // process_name of row being saved
     const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
-    // Load blacklist from Electron
-    const loadBlacklist = useCallback(async () => {
+    // ─── Load from Supabase ───────────────────────────────────────────────────
+    const loadApps = useCallback(async () => {
         setLoading(true);
         try {
-            if (window.electronAPI?.getDefaultBlacklist) {
-                const categories = await window.electronAPI.getDefaultBlacklist();
-                setBlacklistByCategory(categories || {});
-            }
+            const { data, error } = await supabase
+                .from('app_blacklist')
+                .select('*')
+                .order('category')
+                .order('display_name');
+
+            if (error) throw error;
+            setApps(data || []);
         } catch (err) {
             console.error('Failed to load blacklist:', err);
+            setSnackbar({ open: true, message: 'Failed to load blacklist from database', severity: 'error' });
         }
         setLoading(false);
     }, []);
 
-    useEffect(() => {
-        loadBlacklist();
-    }, [loadBlacklist]);
+    useEffect(() => { loadApps(); }, [loadApps]);
 
-    // Toggle whitelist for an app
-    const toggleWhitelist = async (processName) => {
-        const name = processName.toLowerCase();
-        let updated;
+    // ─── Toggle whitelist ─────────────────────────────────────────────────────
+    // The app STAYS in the list — only is_whitelisted flips.
+    const toggleWhitelist = async (app) => {
+        const newVal = !app.is_whitelisted;
+        setSaving(app.process_name);
 
-        if (whitelist.includes(name)) {
-            updated = whitelist.filter(p => p !== name);
-        } else {
-            updated = [...whitelist, name];
+        // Optimistic update
+        setApps(prev => prev.map(a =>
+            a.process_name === app.process_name ? { ...a, is_whitelisted: newVal } : a
+        ));
+
+        try {
+            const { error } = await supabase
+                .from('app_blacklist')
+                .update({ is_whitelisted: newVal })
+                .eq('process_name', app.process_name);
+
+            if (error) throw error;
+
+            // Sync to Electron enforcement at runtime if available
+            if (window.electronAPI?.setWhitelist) {
+                const whitelisted = apps
+                    .filter(a => (a.process_name === app.process_name ? newVal : a.is_whitelisted))
+                    .map(a => a.process_name);
+                await window.electronAPI.setWhitelist(whitelisted);
+            }
+
+            setSnackbar({
+                open: true,
+                message: newVal
+                    ? `${app.display_name} is now ALLOWED (whitelisted)`
+                    : `${app.display_name} is now BLOCKED`,
+                severity: newVal ? 'success' : 'warning'
+            });
+        } catch (err) {
+            // Rollback optimistic update
+            setApps(prev => prev.map(a =>
+                a.process_name === app.process_name ? { ...a, is_whitelisted: !newVal } : a
+            ));
+            setSnackbar({ open: true, message: `Failed to update: ${err.message}`, severity: 'error' });
         }
 
-        setWhitelist(updated);
-
-        if (window.electronAPI?.setWhitelist) {
-            await window.electronAPI.setWhitelist(updated);
-        }
-
-        setSnackbar({
-            open: true,
-            message: whitelist.includes(name)
-                ? `${processName} is now BLOCKED`
-                : `${processName} is now ALLOWED`,
-            severity: whitelist.includes(name) ? 'warning' : 'success'
-        });
+        setSaving(null);
     };
 
-    // Add custom app
+    // ─── Add custom app ───────────────────────────────────────────────────────
     const handleAddApp = async () => {
         if (!newApp.name.trim()) return;
 
@@ -84,90 +109,82 @@ export default function AdminBlacklistManager() {
             ? newApp.name.toLowerCase()
             : `${newApp.name.toLowerCase()}.exe`;
 
-        if (window.electronAPI?.addToBlacklist) {
-            await window.electronAPI.addToBlacklist(processName);
+        const displayName = newApp.displayName.trim() || newApp.name;
+
+        setSaving('__adding__');
+        try {
+            const { data, error } = await supabase
+                .from('app_blacklist')
+                .insert({
+                    process_name: processName,
+                    display_name: displayName,
+                    category: newApp.category,
+                    is_default: false,
+                    is_whitelisted: false,
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            setApps(prev => [...prev, data]);
+
+            // Also push to Electron
+            if (window.electronAPI?.addToBlacklist) {
+                await window.electronAPI.addToBlacklist(processName);
+            }
+
+            setNewApp({ name: '', displayName: '', category: 'custom' });
+            setAddDialogOpen(false);
+            setSnackbar({ open: true, message: `${processName} added to blacklist`, severity: 'success' });
+        } catch (err) {
+            setSnackbar({ open: true, message: `Failed to add: ${err.message}`, severity: 'error' });
         }
-
-        setCustomApps(prev => [...prev, {
-            name: processName,
-            displayName: newApp.displayName || newApp.name,
-            category: 'custom'
-        }]);
-
-        setNewApp({ name: '', displayName: '', category: 'custom' });
-        setAddDialogOpen(false);
-        setSnackbar({ open: true, message: `${processName} added to blacklist`, severity: 'success' });
+        setSaving(null);
     };
 
-    // Remove custom app
-    const handleRemoveApp = async (processName) => {
-        if (window.electronAPI?.removeFromBlacklist) {
-            await window.electronAPI.removeFromBlacklist(processName);
-        }
+    // ─── Remove custom app (non-default only) ────────────────────────────────
+    const handleRemoveApp = async (app) => {
+        setSaving(app.process_name);
+        try {
+            const { error } = await supabase
+                .from('app_blacklist')
+                .delete()
+                .eq('process_name', app.process_name);
 
-        setCustomApps(prev => prev.filter(a => a.name !== processName));
-        setSnackbar({ open: true, message: `${processName} removed from blacklist`, severity: 'info' });
+            if (error) throw error;
+
+            setApps(prev => prev.filter(a => a.process_name !== app.process_name));
+
+            if (window.electronAPI?.removeFromBlacklist) {
+                await window.electronAPI.removeFromBlacklist(app.process_name);
+            }
+
+            setSnackbar({ open: true, message: `${app.process_name} removed`, severity: 'info' });
+        } catch (err) {
+            setSnackbar({ open: true, message: `Failed to remove: ${err.message}`, severity: 'error' });
+        }
+        setSaving(null);
     };
 
-    // Build flat list for rendering
-    const getAllApps = () => {
-        const apps = [];
+    // ─── Filter ───────────────────────────────────────────────────────────────
+    const filteredApps = apps.filter(app => {
+        const matchTab = activeTab === 'all' || app.category === activeTab;
+        const matchSearch = !searchTerm ||
+            app.process_name.includes(searchTerm.toLowerCase()) ||
+            app.display_name.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchTab && matchSearch;
+    });
 
-        // Default categories
-        Object.entries(blacklistByCategory).forEach(([category, processes]) => {
-            processes.forEach(name => {
-                apps.push({
-                    name,
-                    displayName: name.replace('.exe', ''),
-                    category,
-                    isDefault: true,
-                    isWhitelisted: whitelist.includes(name.toLowerCase())
-                });
-            });
-        });
-
-        // Custom additions
-        customApps.forEach(app => {
-            apps.push({
-                ...app,
-                isDefault: false,
-                isWhitelisted: whitelist.includes(app.name.toLowerCase())
-            });
-        });
-
-        return apps;
-    };
-
-    // Filter apps
-    const getFilteredApps = () => {
-        let apps = getAllApps();
-
-        // Filter by tab
-        if (activeTab !== 'all') {
-            apps = apps.filter(a => a.category === activeTab);
-        }
-
-        // Filter by search
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            apps = apps.filter(a =>
-                a.name.toLowerCase().includes(term) ||
-                a.displayName.toLowerCase().includes(term)
-            );
-        }
-
-        return apps;
-    };
-
-    const filteredApps = getFilteredApps();
-    const allApps = getAllApps();
-    const blockedCount = allApps.filter(a => !a.isWhitelisted).length;
-    const allowedCount = allApps.filter(a => a.isWhitelisted).length;
+    const blockedCount = apps.filter(a => !a.is_whitelisted).length;
+    const allowedCount = apps.filter(a => a.is_whitelisted).length;
+    const customCount = apps.filter(a => !a.is_default).length;
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-                <CircularProgress />
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 6, gap: 2 }}>
+                <CircularProgress size={28} />
+                <Typography color="text.secondary">Loading blacklist from database...</Typography>
             </Box>
         );
     }
@@ -177,34 +194,41 @@ export default function AdminBlacklistManager() {
             {/* Header */}
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, gap: 2 }}>
                 <Shield sx={{ fontSize: 32, color: '#F44336' }} />
-                <Box>
-                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                        Application Blacklist Manager
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                        Manage which applications are blocked during exams
+                <Box sx={{ flex: 1 }}>
+                    <Typography variant="h5" fontWeight={700}>Application Blacklist Manager</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Manage which applications are blocked during exams. Changes sync to Supabase instantly.
                     </Typography>
                 </Box>
+                <Tooltip title="Refresh from database">
+                    <IconButton onClick={loadApps}><Refresh /></IconButton>
+                </Tooltip>
             </Box>
 
             {/* Stats */}
             <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
-                <Card sx={{ flex: 1, bgcolor: 'rgba(244, 67, 54, 0.1)', border: '1px solid rgba(244, 67, 54, 0.3)' }}>
+                <Card sx={{ flex: 1, bgcolor: 'rgba(244, 67, 54, 0.08)', border: '1px solid rgba(244, 67, 54, 0.3)' }}>
                     <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#F44336' }}>{blockedCount}</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>Blocked Apps</Typography>
+                        <Typography variant="h4" fontWeight={700} color="#F44336">{blockedCount}</Typography>
+                        <Typography variant="body2" color="text.secondary">Blocked Apps</Typography>
                     </CardContent>
                 </Card>
-                <Card sx={{ flex: 1, bgcolor: 'rgba(76, 175, 80, 0.1)', border: '1px solid rgba(76, 175, 80, 0.3)' }}>
+                <Card sx={{ flex: 1, bgcolor: 'rgba(76, 175, 80, 0.08)', border: '1px solid rgba(76, 175, 80, 0.3)' }}>
                     <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#4CAF50' }}>{allowedCount}</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>Whitelisted</Typography>
+                        <Typography variant="h4" fontWeight={700} color="#4CAF50">{allowedCount}</Typography>
+                        <Typography variant="body2" color="text.secondary">Whitelisted</Typography>
                     </CardContent>
                 </Card>
-                <Card sx={{ flex: 1, bgcolor: 'rgba(0, 188, 212, 0.1)', border: '1px solid rgba(0, 188, 212, 0.3)' }}>
+                <Card sx={{ flex: 1, bgcolor: 'rgba(255, 193, 7, 0.08)', border: '1px solid rgba(255, 193, 7, 0.3)' }}>
                     <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#00BCD4' }}>{customApps.length}</Typography>
-                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>Custom Added</Typography>
+                        <Typography variant="h4" fontWeight={700} color="#FFC107">{customCount}</Typography>
+                        <Typography variant="body2" color="text.secondary">Custom Added</Typography>
+                    </CardContent>
+                </Card>
+                <Card sx={{ flex: 1, bgcolor: 'rgba(33, 150, 243, 0.08)', border: '1px solid rgba(33, 150, 243, 0.3)' }}>
+                    <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                        <Typography variant="h4" fontWeight={700} color="#2196F3">{apps.length}</Typography>
+                        <Typography variant="body2" color="text.secondary">Total Apps</Typography>
                     </CardContent>
                 </Card>
             </Box>
@@ -213,21 +237,17 @@ export default function AdminBlacklistManager() {
             <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                 <TextField
                     size="small"
-                    placeholder="Search applications..."
+                    placeholder="Search by name or process..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    InputProps={{
-                        startAdornment: (
-                            <InputAdornment position="start"><Search /></InputAdornment>
-                        ),
-                    }}
+                    InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }}
                     sx={{ flex: 1 }}
                 />
                 <Button
                     variant="contained"
                     startIcon={<Add />}
                     onClick={() => setAddDialogOpen(true)}
-                    sx={{ bgcolor: '#00BCD4' }}
+                    sx={{ bgcolor: '#FFC107', color: '#000', '&:hover': { bgcolor: '#FFB300' } }}
                 >
                     Add Custom App
                 </Button>
@@ -236,85 +256,118 @@ export default function AdminBlacklistManager() {
             {/* Category Tabs */}
             <Tabs
                 value={activeTab}
-                onChange={(e, v) => setActiveTab(v)}
+                onChange={(_, v) => setActiveTab(v)}
                 variant="scrollable"
                 scrollButtons="auto"
-                sx={{ mb: 2, borderBottom: '1px solid rgba(255,255,255,0.1)' }}
+                sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
             >
-                <Tab label={`All (${allApps.length})`} value="all" />
+                <Tab label={`All (${apps.length})`} value="all" />
                 {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => {
-                    const count = allApps.filter(a => a.category === key).length;
+                    const count = apps.filter(a => a.category === key).length;
                     if (count === 0) return null;
-                    return <Tab key={key} label={`${cfg.label} (${count})`} value={key} />;
+                    return (
+                        <Tab
+                            key={key}
+                            value={key}
+                            label={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    {cfg.label}
+                                    <Chip label={count} size="small" sx={{ height: 18, fontSize: '0.65rem', bgcolor: `${cfg.color}22`, color: cfg.color }} />
+                                </Box>
+                            }
+                        />
+                    );
                 })}
             </Tabs>
 
             {/* App List */}
-            <List sx={{ bgcolor: 'rgba(255,255,255,0.03)', borderRadius: 2 }}>
+            <List sx={{ bgcolor: 'action.hover', borderRadius: 2 }}>
                 {filteredApps.length === 0 && (
                     <ListItem>
                         <ListItemText primary="No applications found" secondary="Try a different search or category" />
                     </ListItem>
                 )}
 
-                {filteredApps.map((app, i) => (
-                    <Box key={`${app.name}-${i}`}>
-                        <ListItem sx={{ py: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
-                                {app.isWhitelisted
-                                    ? <CheckCircle sx={{ color: '#4CAF50', fontSize: 20 }} />
-                                    : <Block sx={{ color: '#F44336', fontSize: 20 }} />
-                                }
+                {filteredApps.map((app, i) => {
+                    const catColor = CATEGORY_CONFIG[app.category]?.color || '#9E9E9E';
+                    const isSaving = saving === app.process_name;
+
+                    return (
+                        <Box key={app.process_name}>
+                            <ListItem sx={{ py: 1, opacity: app.is_whitelisted ? 0.6 : 1, transition: 'opacity 200ms' }}>
+                                {/* Status icon */}
+                                <Box sx={{ mr: 1.5, flexShrink: 0 }}>
+                                    {app.is_whitelisted
+                                        ? <CheckCircle sx={{ color: '#4CAF50', fontSize: 20 }} />
+                                        : <Block sx={{ color: '#F44336', fontSize: 20 }} />
+                                    }
+                                </Box>
+
                                 <ListItemText
                                     primary={
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                                                {app.displayName}
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                            <Typography
+                                                variant="body1"
+                                                fontWeight={500}
+                                                sx={{ textDecoration: app.is_whitelisted ? 'line-through' : 'none', color: 'text.primary' }}
+                                            >
+                                                {app.display_name}
                                             </Typography>
-                                            <Typography variant="caption" sx={{ color: 'text.secondary', fontFamily: 'monospace' }}>
-                                                ({app.name})
+                                            <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                                                {app.process_name}
                                             </Typography>
                                             <Chip
                                                 label={CATEGORY_CONFIG[app.category]?.label || app.category}
                                                 size="small"
-                                                sx={{
-                                                    bgcolor: CATEGORY_CONFIG[app.category]?.color + '22',
-                                                    color: CATEGORY_CONFIG[app.category]?.color,
-                                                    fontSize: '0.7rem',
-                                                    height: 20
-                                                }}
+                                                sx={{ bgcolor: `${catColor}22`, color: catColor, fontSize: '0.65rem', height: 18 }}
                                             />
+                                            {!app.is_default && (
+                                                <Chip label="custom" size="small" sx={{ bgcolor: 'rgba(255,193,7,0.15)', color: '#FFC107', fontSize: '0.65rem', height: 18 }} />
+                                            )}
                                         </Box>
                                     }
                                 />
-                            </Box>
-                            <ListItemSecondaryAction sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Typography variant="caption" sx={{ color: app.isWhitelisted ? '#4CAF50' : '#F44336' }}>
-                                    {app.isWhitelisted ? 'Allowed' : 'Blocked'}
-                                </Typography>
-                                <Switch
-                                    checked={!app.isWhitelisted}
-                                    onChange={() => toggleWhitelist(app.name)}
-                                    size="small"
-                                    sx={{
-                                        '& .MuiSwitch-switchBase.Mui-checked': { color: '#F44336' },
-                                        '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#F44336' },
-                                    }}
-                                />
-                                {!app.isDefault && (
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => handleRemoveApp(app.name)}
-                                        sx={{ color: '#F44336' }}
-                                    >
-                                        <Delete fontSize="small" />
-                                    </IconButton>
-                                )}
-                            </ListItemSecondaryAction>
-                        </ListItem>
-                        {i < filteredApps.length - 1 && <Divider sx={{ opacity: 0.1 }} />}
-                    </Box>
-                ))}
+
+                                <ListItemSecondaryAction sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Typography variant="caption" sx={{ color: app.is_whitelisted ? '#4CAF50' : '#F44336', minWidth: 50, textAlign: 'right' }}>
+                                        {app.is_whitelisted ? 'Allowed' : 'Blocked'}
+                                    </Typography>
+
+                                    {isSaving
+                                        ? <CircularProgress size={20} sx={{ mx: 1 }} />
+                                        : (
+                                            <Tooltip title={app.is_whitelisted ? 'Click to block this app' : 'Click to whitelist (allow) this app'}>
+                                                <Switch
+                                                    checked={!app.is_whitelisted}
+                                                    onChange={() => toggleWhitelist(app)}
+                                                    size="small"
+                                                    sx={{
+                                                        '& .MuiSwitch-switchBase.Mui-checked': { color: '#F44336' },
+                                                        '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: '#F44336' },
+                                                    }}
+                                                />
+                                            </Tooltip>
+                                        )
+                                    }
+
+                                    {!app.is_default && (
+                                        <Tooltip title="Remove custom app from database">
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => handleRemoveApp(app)}
+                                                disabled={isSaving}
+                                                sx={{ color: '#F44336' }}
+                                            >
+                                                <Delete fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    )}
+                                </ListItemSecondaryAction>
+                            </ListItem>
+                            {i < filteredApps.length - 1 && <Divider sx={{ opacity: 0.1 }} />}
+                        </Box>
+                    );
+                })}
             </List>
 
             {/* Add Custom App Dialog */}
@@ -322,32 +375,45 @@ export default function AdminBlacklistManager() {
                 <DialogTitle>Add Custom Application to Blacklist</DialogTitle>
                 <DialogContent>
                     <Alert severity="info" sx={{ mb: 2 }}>
-                        Enter the exact process name as it appears in Task Manager
+                        Enter the exact process name as it appears in Task Manager. Changes are saved to Supabase.
                     </Alert>
                     <TextField
-                        autoFocus
-                        fullWidth
+                        autoFocus fullWidth
                         label="Process Name"
                         placeholder="example.exe"
                         value={newApp.name}
-                        onChange={(e) => setNewApp(prev => ({ ...prev, name: e.target.value }))}
+                        onChange={(e) => setNewApp(p => ({ ...p, name: e.target.value }))}
                         sx={{ mb: 2 }}
-                        helperText="The .exe extension will be added automatically if not provided"
+                        helperText=".exe is added automatically if omitted"
                     />
                     <TextField
                         fullWidth
-                        label="Display Name (Optional)"
+                        label="Display Name (optional)"
                         placeholder="Example App"
                         value={newApp.displayName}
-                        onChange={(e) => setNewApp(prev => ({ ...prev, displayName: e.target.value }))}
+                        onChange={(e) => setNewApp(p => ({ ...p, displayName: e.target.value }))}
+                        sx={{ mb: 2 }}
                     />
+                    <FormControl fullWidth size="small">
+                        <InputLabel>Category</InputLabel>
+                        <Select
+                            value={newApp.category}
+                            label="Category"
+                            onChange={(e) => setNewApp(p => ({ ...p, category: e.target.value }))}
+                        >
+                            {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                                <MenuItem key={key} value={key}>{cfg.label}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setAddDialogOpen(false)}>Cancel</Button>
                     <Button
                         onClick={handleAddApp}
                         variant="contained"
-                        disabled={!newApp.name.trim()}
+                        disabled={!newApp.name.trim() || saving === '__adding__'}
+                        startIcon={saving === '__adding__' ? <CircularProgress size={16} color="inherit" /> : <Add />}
                         sx={{ bgcolor: '#F44336' }}
                     >
                         Add to Blacklist
@@ -359,9 +425,10 @@ export default function AdminBlacklistManager() {
             <Snackbar
                 open={snackbar.open}
                 autoHideDuration={3000}
-                onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+                onClose={() => setSnackbar(p => ({ ...p, open: false }))}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
             >
-                <Alert severity={snackbar.severity} variant="filled">
+                <Alert severity={snackbar.severity} variant="filled" onClose={() => setSnackbar(p => ({ ...p, open: false }))}>
                     {snackbar.message}
                 </Alert>
             </Snackbar>

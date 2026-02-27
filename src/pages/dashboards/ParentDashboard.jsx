@@ -110,7 +110,7 @@ export default function ParentDashboard() {
                                 </Box>
                                 {childData.upcomingExams.length === 0 ? <Typography color="text.secondary" variant="body2">None</Typography> :
                                     childData.upcomingExams.map(e => (
-                                        <Box key={e.id} sx={{ p: 2, mb: 1, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.02)' }}>
+                                        <Box key={e.id} sx={{ p: 2, mb: 1, borderRadius: 2, bgcolor: 'action.hover' }}>
                                             <Typography variant="body2" fontWeight={600}>{e.title}</Typography>
                                             <Typography variant="caption" color="text.secondary">{e.courses?.name} • {new Date(e.start_time).toLocaleString()}</Typography>
                                         </Box>

@@ -68,7 +68,7 @@ export default function TeacherDashboard() {
 
             {/* Stats */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                     <Card>
                         <CardContent sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
                             <Box sx={{ p: 1.5, borderRadius: 3, bgcolor: 'rgba(0, 217, 255, 0.1)' }}>
@@ -81,7 +81,7 @@ export default function TeacherDashboard() {
                         </CardContent>
                     </Card>
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                     <Card>
                         <CardContent sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
                             <Box sx={{ p: 1.5, borderRadius: 3, bgcolor: 'rgba(108, 99, 255, 0.1)' }}>
@@ -94,7 +94,7 @@ export default function TeacherDashboard() {
                         </CardContent>
                     </Card>
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                     <Card>
                         <CardContent sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
                             <Box sx={{ p: 1.5, borderRadius: 3, bgcolor: pendingFlags > 0 ? 'rgba(255, 77, 106, 0.1)' : 'rgba(78, 205, 196, 0.1)' }}>
@@ -111,7 +111,7 @@ export default function TeacherDashboard() {
 
             <Grid container spacing={3}>
                 {/* Courses */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent sx={{ p: 3 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
@@ -120,7 +120,7 @@ export default function TeacherDashboard() {
                             {courses.length === 0 ? (
                                 <Typography color="text.secondary" variant="body2">No courses assigned yet</Typography>
                             ) : (
-                                <List disablePadding>
+                                <List disablePadding sx={{ maxHeight: 320, overflowY: 'auto' }}>
                                     {courses.map((course, idx) => (
                                         <Box key={course.id}>
                                             <ListItem sx={{ px: 0 }}>
@@ -145,7 +145,7 @@ export default function TeacherDashboard() {
                 </Grid>
 
                 {/* Recent Tests */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent sx={{ p: 3 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
@@ -157,7 +157,7 @@ export default function TeacherDashboard() {
                             {tests.length === 0 ? (
                                 <Typography color="text.secondary" variant="body2">No tests created yet</Typography>
                             ) : (
-                                <List disablePadding>
+                                <List disablePadding sx={{ maxHeight: 320, overflowY: 'auto' }}>
                                     {tests.map((test) => {
                                         const isUpcoming = new Date(test.start_time) > new Date();
                                         const isActive = new Date(test.start_time) <= new Date() && new Date(test.end_time) >= new Date();
@@ -168,8 +168,9 @@ export default function TeacherDashboard() {
                                                     sx={{
                                                         p: 2,
                                                         borderRadius: 2,
-                                                        bgcolor: 'rgba(255,255,255,0.02)',
-                                                        border: '1px solid rgba(148,163,184,0.06)',
+                                                        bgcolor: 'action.hover',
+                                                        border: '1px solid',
+                                                        borderColor: 'divider',
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         justifyContent: 'space-between',

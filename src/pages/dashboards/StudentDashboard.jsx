@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import {
     Assignment, CalendarMonth, TrendingUp, PlayArrow,
-    CheckCircle, Schedule, Flag, Warning,
+    CheckCircle, Schedule, Flag, Warning, Videocam
 } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../store/authStore';
@@ -53,11 +53,11 @@ export default function StudentDashboard() {
                 const { data: tests } = await supabase
                     .from('tests')
                     .select(`
-                        id, title, start_time, duration_minutes,
+                        id, title, start_time, end_time, duration_minutes,
                         courses (name, code)
                     `)
                     .in('course_id', courseIds)
-                    .gt('start_time', new Date().toISOString())
+                    .gt('end_time', new Date().toISOString()) // Fetch anything that hasn't ended yet
                     .order('start_time', { ascending: true });
                 setUpcomingExams(tests || []);
             }
@@ -128,22 +128,32 @@ export default function StudentDashboard() {
                 onSuccess={handleAdminSuccess}
                 title="Reset Face ID Verification"
             />
-            <Box sx={{ mb: 4 }}>
-                <Typography variant="h4" fontWeight={700} gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    Welcome back, {user.full_name || user.username?.split('@')[0]} 👋
-                    <Chip
-                        icon={faceRegistered ? <CheckCircle /> : <Warning />}
-                        label={faceRegistered ? "Face ID Active (Click to Reset)" : "Face ID Pending"} // Updated Label
-                        color={faceRegistered ? "success" : "warning"}
-                        variant="outlined"
-                        // If registered, open Admin Dialog. If not, go to registration directly.
-                        onClick={() => faceRegistered ? handleFaceIdUpdate() : navigate('/dashboard/face-registration')}
-                        sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' } }}
-                    />
-                </Typography>
-                <Typography color="text.secondary">
-                    View your upcoming exams, past results, and profile
-                </Typography>
+            <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <Box>
+                    <Typography variant="h4" fontWeight={700} gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        Welcome back, {user.full_name || user.username?.split('@')[0]} 👋
+                        <Chip
+                            icon={faceRegistered ? <CheckCircle /> : <Warning />}
+                            label={faceRegistered ? "Face ID Active (Click to Reset)" : "Face ID Pending"}
+                            color={faceRegistered ? "success" : "warning"}
+                            variant="outlined"
+                            onClick={() => faceRegistered ? handleFaceIdUpdate() : navigate('/dashboard/face-registration')}
+                            sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'rgba(0,0,0,0.04)' } }}
+                        />
+                    </Typography>
+                    <Typography color="text.secondary">
+                        View your upcoming exams, past results, and profile
+                    </Typography>
+                </Box>
+                <Button
+                    variant="outlined"
+                    color="primary"
+                    startIcon={<Videocam />}
+                    onClick={() => navigate('/dashboard/pw-test')}
+                    sx={{ borderRadius: 2, px: 3, py: 1 }}
+                >
+                    System & Environment Check
+                </Button>
             </Box>
 
             {/* ... Rest of UI ... */}
@@ -163,36 +173,38 @@ export default function StudentDashboard() {
                                     <Typography color="text.secondary">No upcoming exams</Typography>
                                 </Box>
                             ) : (
-                                upcomingExams.map((exam) => {
-                                    const ready = isExamReady(exam);
-                                    const start = new Date(exam.start_time);
-                                    return (
-                                        <Box key={exam.id} sx={{
-                                            p: 2, mb: 1.5, borderRadius: 2,
-                                            border: '1px solid',
-                                            borderColor: ready ? 'rgba(78, 205, 196, 0.3)' : 'rgba(148,163,184,0.08)',
-                                            bgcolor: ready ? 'rgba(78, 205, 196, 0.05)' : 'rgba(255,255,255,0.02)',
-                                        }}>
-                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <Box>
-                                                    <Typography variant="body1" fontWeight={600}>{exam.title}</Typography>
-                                                    <Typography variant="caption" color="text.secondary">
-                                                        {exam.courses?.name} • {exam.duration_minutes} min • {start.toLocaleString()}
-                                                    </Typography>
+                                <Box sx={{ maxHeight: 320, overflowY: 'auto', pr: 1 }}>
+                                    {upcomingExams.map((exam) => {
+                                        const ready = isExamReady(exam);
+                                        const start = new Date(exam.start_time);
+                                        return (
+                                            <Box key={exam.id} sx={{
+                                                p: 2, mb: 1.5, borderRadius: 2,
+                                                border: '1px solid',
+                                                borderColor: ready ? 'rgba(78, 205, 196, 0.3)' : 'divider',
+                                                bgcolor: ready ? 'rgba(78, 205, 196, 0.05)' : 'action.hover',
+                                            }}>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <Box>
+                                                        <Typography variant="body1" fontWeight={600}>{exam.title}</Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {exam.courses?.name} • {exam.duration_minutes} min • {start.toLocaleString()}
+                                                        </Typography>
+                                                    </Box>
+                                                    {ready ? (
+                                                        <Button variant="contained" size="small" startIcon={<PlayArrow />}
+                                                            onClick={() => navigate(`/dashboard/exam/${exam.id}`)}
+                                                            sx={{ background: 'linear-gradient(135deg, #4ECDC4, #44B09E)' }}>
+                                                            Start Exam
+                                                        </Button>
+                                                    ) : (
+                                                        <Chip label={`Starts ${start.toLocaleDateString()}`} size="small" variant="outlined" />
+                                                    )}
                                                 </Box>
-                                                {ready ? (
-                                                    <Button variant="contained" size="small" startIcon={<PlayArrow />}
-                                                        onClick={() => navigate(`/dashboard/exam/${exam.id}`)}
-                                                        sx={{ background: 'linear-gradient(135deg, #4ECDC4, #44B09E)' }}>
-                                                        Start Exam
-                                                    </Button>
-                                                ) : (
-                                                    <Chip label={`Starts ${start.toLocaleDateString()}`} size="small" variant="outlined" />
-                                                )}
                                             </Box>
-                                        </Box>
-                                    );
-                                })
+                                        );
+                                    })}
+                                </Box>
                             )}
                         </CardContent>
                     </Card>
@@ -239,39 +251,41 @@ export default function StudentDashboard() {
                                     {pastResults.length === 0 ? (
                                         <Typography color="text.secondary" variant="body2">No results yet</Typography>
                                     ) : (
-                                        pastResults.map((result) => (
-                                            <Box key={result.id}
-                                                onClick={() => navigate(`/dashboard/results/${result.id}`)}
-                                                sx={{
-                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                                    p: 1.5, mb: 1, borderRadius: 2,
-                                                    bgcolor: result.status === 'invalidated' ? 'rgba(255, 77, 106, 0.05)' : 'rgba(255,255,255,0.02)',
-                                                    cursor: 'pointer', transition: 'all 0.2s',
-                                                    '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
-                                                }}>
-                                                <Box>
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                        <Typography variant="body2" fontWeight={600}>
-                                                            {result.tests?.title || 'Unknown Test'}
+                                        <Box sx={{ maxHeight: 320, overflowY: 'auto', pr: 1 }}>
+                                            {pastResults.map((result) => (
+                                                <Box key={result.id}
+                                                    onClick={() => navigate(`/dashboard/results/${result.id}`)}
+                                                    sx={{
+                                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                                        p: 1.5, mb: 1, borderRadius: 2,
+                                                        bgcolor: result.status === 'invalidated' ? 'rgba(255, 77, 106, 0.05)' : 'action.hover',
+                                                        cursor: 'pointer', transition: 'all 0.2s',
+                                                        '&:hover': { bgcolor: 'action.selected' }
+                                                    }}>
+                                                    <Box>
+                                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                            <Typography variant="body2" fontWeight={600}>
+                                                                {result.tests?.title || 'Unknown Test'}
+                                                            </Typography>
+                                                            {result.status === 'invalidated' && (
+                                                                <Chip label="INVALIDATED" size="small" color="error" sx={{ height: 16, fontSize: 9 }} />
+                                                            )}
+                                                        </Box>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {result.ended_at ? new Date(result.ended_at).toLocaleDateString() : '—'}
                                                         </Typography>
-                                                        {result.status === 'invalidated' && (
-                                                            <Chip label="INVALIDATED" size="small" color="error" sx={{ height: 16, fontSize: 9 }} />
-                                                        )}
                                                     </Box>
-                                                    <Typography variant="caption" color="text.secondary">
-                                                        {result.ended_at ? new Date(result.ended_at).toLocaleDateString() : '—'}
-                                                    </Typography>
+                                                    {result.status === 'invalidated' ? (
+                                                        <Typography variant="body2" fontWeight={700} color="error">VOID</Typography>
+                                                    ) : (
+                                                        <Chip
+                                                            label={`${result.score || 0}/${result.tests?.total_marks || 0}`}
+                                                            size="small" color="primary" variant="outlined"
+                                                        />
+                                                    )}
                                                 </Box>
-                                                {result.status === 'invalidated' ? (
-                                                    <Typography variant="body2" fontWeight={700} color="error">VOID</Typography>
-                                                ) : (
-                                                    <Chip
-                                                        label={`${result.score || 0}/${result.tests?.total_marks || 0}`}
-                                                        size="small" color="primary" variant="outlined"
-                                                    />
-                                                )}
-                                            </Box>
-                                        ))
+                                            ))}
+                                        </Box>
                                     )}
                                 </CardContent>
                             </Card>

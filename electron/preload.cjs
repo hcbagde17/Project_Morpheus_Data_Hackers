@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     // Secure Enforcement
-    startEnforcement: () => ipcRenderer.send('proctoring:start-enforcement'),
+    startEnforcement: () => ipcRenderer.invoke('proctoring:start-enforcement'),
     stopEnforcement: () => ipcRenderer.send('proctoring:stop-enforcement'),
     onViolation: (callback) => {
         const subscription = (event, data) => callback(data);

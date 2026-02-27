@@ -2,6 +2,11 @@ const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
 
+// Make Supabase credentials available to the Electron main process (EnforcementService, etc.)
+// These match src/lib/supabase.js — single source of truth is the .env file in prod.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://itdratwmxbugkmbhoiyw.supabase.co';
+process.env.SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_C9Uehgg5m0fC5O1-RmrQoQ_pldk3tsU';
+
 // Configure autoUpdater
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -49,7 +54,7 @@ function createWindow() {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.supabase.co http://localhost:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net https://*.gstatic.com https://storage.googleapis.com https://*.ort.pyke.io; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; worker-src 'self' blob:; object-src 'none'; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in;"
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.supabase.co http://localhost:* ws://localhost:* https://fonts.googleapis.com https://fonts.gstatic.com https://cdn.jsdelivr.net https://*.gstatic.com https://storage.googleapis.com https://*.ort.pyke.io https://api.groq.com https://generativelanguage.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:; worker-src 'self' blob:; object-src 'none'; img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in;"
         ]
       }
     });
@@ -156,9 +161,10 @@ function getEnforcementService() {
 }
 
 // Start during-exam enforcement (continuous detection + keyboard hooks)
-ipcMain.on('proctoring:start-enforcement', () => {
+ipcMain.handle('proctoring:start-enforcement', async () => {
   const svc = getEnforcementService();
-  if (svc) svc.start();
+  if (svc) await svc.start();
+  return { success: true };
 });
 
 // Stop enforcement

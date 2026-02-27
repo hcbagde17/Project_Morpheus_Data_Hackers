@@ -20,30 +20,72 @@ export default function FlagReview() {
     const [flags, setFlags] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all');
+    const [courses, setCourses] = useState([]);
+    const [tests, setTests] = useState([]);
+    const [selectedCourse, setSelectedCourse] = useState('all');
+    const [selectedTest, setSelectedTest] = useState('all');
+    const [filtersLoaded, setFiltersLoaded] = useState(false);
+
     const [reviewOpen, setReviewOpen] = useState(false);
     const [selectedFlag, setSelectedFlag] = useState(null);
     const [reviewAction, setReviewAction] = useState('');
     const [reviewNotes, setReviewNotes] = useState('');
 
-    useEffect(() => { loadFlags(); }, [filter]);
+    useEffect(() => { loadFilters(); }, []);
+
+    const loadFilters = async () => {
+        try {
+            let courseQuery = supabase.from('courses').select('id, name').eq('is_active', true);
+            if (isTeacher) courseQuery = courseQuery.eq('teacher_id', user.id);
+            const { data: cData } = await courseQuery;
+            setCourses(cData || []);
+
+            let testQuery = supabase.from('tests').select('id, title, course_id');
+            if (isTeacher && cData?.length > 0) {
+                testQuery = testQuery.in('course_id', cData.map(c => c.id));
+            } else if (isTeacher && (!cData || cData.length === 0)) {
+                setTests([]);
+                setFiltersLoaded(true);
+                return;
+            }
+            const { data: tData } = await testQuery;
+            setTests(tData || []);
+        } catch (err) { console.error("Filter load error:", err); }
+        setFiltersLoaded(true);
+    };
+
+    useEffect(() => { if (filtersLoaded) loadFlags(); }, [filter, selectedCourse, selectedTest, filtersLoaded]);
 
     const loadFlags = async () => {
         setLoading(true);
+        if (isTeacher && courses.length === 0) {
+            setFlags([]);
+            setLoading(false);
+            return;
+        }
+
         let query = supabase
             .from('flags')
-            .select('*, exam_sessions(student_id, test_id, tests(title))')
+            .select('*, exam_sessions!inner(student_id, test_id, tests!inner(title, course_id))')
             .order('timestamp', { ascending: false })
             .limit(100);
 
-        if (filter === 'high' || filter === 'medium' || filter === 'low') {
-            query = query.eq('severity', filter);
+        if (isTeacher) {
+            query = query.in('exam_sessions.tests.course_id', courses.map(c => c.id));
         }
 
-        // Role-based filtering
-        // Role-based filtering
-        if (isAdmin) {
-            // Admin default view: Strictly only Escalated flags
-            if (filter === 'all') query = query.eq('review_action', 'escalate');
+        if (selectedTest !== 'all') {
+            query = query.eq('exam_sessions.test_id', selectedTest);
+        } else if (selectedCourse !== 'all') {
+            query = query.eq('exam_sessions.tests.course_id', selectedCourse);
+        }
+
+        if (filter === 'high') {
+            query = query.in('severity', ['high', 'RED']);
+        } else if (filter === 'medium') {
+            query = query.in('severity', ['medium', 'ORANGE', 'YELLOW']);
+        } else if (filter === 'low') {
+            query = query.in('severity', ['low']);
         }
 
         if (filter === 'escalated') query = query.eq('review_action', 'escalate');
@@ -93,8 +135,8 @@ export default function FlagReview() {
 
     // Stats
     const totalFlags = flags.length;
-    const highFlags = flags.filter(f => f.severity === 'high').length;
-    const mediumFlags = flags.filter(f => f.severity === 'medium').length;
+    const highFlags = flags.filter(f => f.severity === 'high' || f.severity === 'RED').length;
+    const mediumFlags = flags.filter(f => f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW').length;
     const unreviewedFlags = flags.filter(f => !f.reviewed).length;
 
     if (loading) return <LinearProgress />;
@@ -117,7 +159,7 @@ export default function FlagReview() {
                     { label: 'Medium Severity', value: mediumFlags, color: '#FF9800' },
                     { label: 'Unreviewed', value: unreviewedFlags, color: '#FFC107' },
                 ].map(stat => (
-                    <Grid item xs={6} md={3} key={stat.label}>
+                    <Grid size={{ xs: 6, md: 3 }} key={stat.label}>
                         <Paper sx={{ p: 2, textAlign: 'center', borderTop: `3px solid ${stat.color}` }}>
                             <Typography variant="h4" fontWeight={700} color={stat.color}>{stat.value}</Typography>
                             <Typography variant="caption" color="text.secondary">{stat.label}</Typography>
@@ -127,25 +169,44 @@ export default function FlagReview() {
             </Grid>
 
             {/* Filters */}
-            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                {[
-                    { key: 'all', label: 'All', color: 'default' },
-                    { key: 'high', label: '🔴 High', color: 'error' },
-                    { key: 'medium', label: '🟠 Medium', color: 'warning' },
-                    { key: 'low', label: '🟡 Low', color: 'default' },
-                    { key: 'low', label: '🟡 Low', color: 'default' },
-                    { key: 'unreviewed', label: 'Unreviewed', color: 'info' },
-                    { key: 'escalated', label: 'Escalated', color: 'error' },
-                ].map(f => (
-                    <Chip
-                        key={f.key}
-                        label={f.label}
-                        onClick={() => setFilter(f.key)}
-                        size="small"
-                        variant={filter === f.key ? 'filled' : 'outlined'}
-                        color={f.color}
-                    />
-                ))}
+            <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+                <TextField select size="small" label="Course Filter" value={selectedCourse}
+                    onChange={e => { setSelectedCourse(e.target.value); setSelectedTest('all'); }}
+                    sx={{ minWidth: 200 }}>
+                    <MenuItem value="all">All Courses</MenuItem>
+                    {courses.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                </TextField>
+
+                <TextField select size="small" label="Test Filter" value={selectedTest}
+                    onChange={e => setSelectedTest(e.target.value)}
+                    sx={{ minWidth: 200 }}>
+                    <MenuItem value="all">All Tests</MenuItem>
+                    {tests.filter(t => selectedCourse === 'all' || t.course_id === selectedCourse).map(t =>
+                        <MenuItem key={t.id} value={t.id}>{t.title}</MenuItem>
+                    )}
+                </TextField>
+
+                <Box sx={{ flexGrow: 1 }} />
+
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    {[
+                        { key: 'all', label: 'All', color: 'default' },
+                        { key: 'high', label: '🔴 High', color: 'error' },
+                        { key: 'medium', label: '🟠 Medium', color: 'warning' },
+                        { key: 'low', label: '🟡 Low', color: 'default' },
+                        { key: 'unreviewed', label: 'Unreviewed', color: 'info' },
+                        { key: 'escalated', label: 'Escalated', color: 'error' },
+                    ].map(f => (
+                        <Chip
+                            key={f.key}
+                            label={f.label}
+                            onClick={() => setFilter(f.key)}
+                            size="small"
+                            variant={filter === f.key ? 'filled' : 'outlined'}
+                            color={f.color}
+                        />
+                    ))}
+                </Box>
             </Box>
 
             {/* Flags Table */}
@@ -170,8 +231,8 @@ export default function FlagReview() {
                                     key={f.id}
                                     hover
                                     sx={{
-                                        borderLeft: f.severity === 'high' ? '3px solid #FF4D6A' :
-                                            f.severity === 'medium' ? '3px solid #FF9800' : '3px solid #ccc'
+                                        borderLeft: (f.severity === 'high' || f.severity === 'RED') ? '3px solid #FF4D6A' :
+                                            (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? '3px solid #FF9800' : '3px solid #ccc'
                                     }}
                                 >
                                     <TableCell>
@@ -183,7 +244,7 @@ export default function FlagReview() {
                                         <Chip
                                             label={f.severity}
                                             size="small"
-                                            color={f.severity === 'high' ? 'error' : f.severity === 'medium' ? 'warning' : 'default'}
+                                            color={(f.severity === 'high' || f.severity === 'RED') ? 'error' : (f.severity === 'medium' || f.severity === 'ORANGE' || f.severity === 'YELLOW') ? 'warning' : 'default'}
                                         />
                                     </TableCell>
                                     <TableCell>
@@ -248,19 +309,19 @@ export default function FlagReview() {
             {/* Review Dialog */}
             <Dialog open={reviewOpen} onClose={() => setReviewOpen(false)} maxWidth="md" fullWidth>
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Warning color={selectedFlag?.severity === 'high' ? 'error' : 'warning'} />
+                    <Warning color={(selectedFlag?.severity === 'high' || selectedFlag?.severity === 'RED') ? 'error' : 'warning'} />
                     Review Flag: {selectedFlag?.type || selectedFlag?.flag_type}
                 </DialogTitle>
                 <DialogContent>
                     {/* Flag Details */}
                     <Paper sx={{ p: 2, mb: 2, bgcolor: 'rgba(108,99,255,0.03)', borderRadius: 2 }}>
                         <Grid container spacing={2}>
-                            <Grid item xs={6}>
+                            <Grid size={{ xs: 6 }}>
                                 <Typography variant="body2"><strong>Type:</strong> {selectedFlag?.type || selectedFlag?.flag_type}</Typography>
                                 <Typography variant="body2"><strong>Severity:</strong> {selectedFlag?.severity}</Typography>
                                 <Typography variant="body2"><strong>Time:</strong> {selectedFlag?.timestamp ? new Date(selectedFlag.timestamp).toLocaleString() : '—'}</Typography>
                             </Grid>
-                            <Grid item xs={6}>
+                            <Grid size={{ xs: 6 }}>
                                 <Typography variant="body2"><strong>Test:</strong> {selectedFlag?.exam_sessions?.tests?.title || '—'}</Typography>
                                 <Typography variant="body2"><strong>Message:</strong> {selectedFlag?.details?.message || '—'}</Typography>
                             </Grid>
@@ -331,7 +392,6 @@ export default function FlagReview() {
                     )}
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setReviewOpen(false)}>Close</Button>
                     <Button onClick={() => setReviewOpen(false)}>Close</Button>
                     {(!selectedFlag?.reviewed || (isAdmin && selectedFlag?.review_action === 'escalate')) && (
                         <Button variant="contained" onClick={handleReview} disabled={!reviewAction}>

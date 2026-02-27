@@ -5,6 +5,7 @@ import {
     Alert, Stepper, Step, StepLabel, Avatar, CircularProgress,
 } from '@mui/material';
 import { LockReset, CameraAlt, CheckCircle, Gavel } from '@mui/icons-material';
+import { useTheme } from '@mui/material';
 import useAuthStore from '../store/authStore';
 import { supabase } from '../lib/supabase';
 
@@ -16,6 +17,8 @@ export default function FirstLoginPage() {
     const [activeStep, setActiveStep] = useState(0);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
 
     // Password step
     const [newPassword, setNewPassword] = useState('');
@@ -131,7 +134,9 @@ export default function FirstLoginPage() {
     return (
         <Box sx={{
             minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'radial-gradient(ellipse at 30% 40%, rgba(108, 99, 255, 0.12) 0%, transparent 60%), #0A0E1A',
+            background: isDark
+                ? `radial-gradient(ellipse at 30% 40%, rgba(108, 99, 255, 0.12) 0%, transparent 60%), ${theme.palette.background.default}`
+                : `radial-gradient(ellipse at 30% 40%, rgba(108, 99, 255, 0.06) 0%, transparent 60%), ${theme.palette.background.default}`,
             p: 2,
         }}>
             <Box sx={{ width: '100%', maxWidth: 520 }}>
@@ -213,7 +218,7 @@ export default function FirstLoginPage() {
                                 </Box>
                                 <Box sx={{
                                     maxHeight: 200, overflowY: 'auto', p: 2, borderRadius: 2,
-                                    background: 'rgba(0,0,0,0.3)', mb: 3, fontSize: '0.85rem',
+                                    background: isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.04)', mb: 3, fontSize: '0.85rem',
                                     color: 'text.secondary',
                                 }}>
                                     <Typography variant="body2" gutterBottom>

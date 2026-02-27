@@ -90,7 +90,7 @@ export default function StudentCalendar() {
                                 const isStartable = status.label === 'Active';
 
                                 return (
-                                    <Grid item xs={12} md={6} lg={4} key={test.id}>
+                                    <Grid size={{ xs: 12, md: 6, lg: 4 }} key={test.id}>
                                         <Card sx={{
                                             borderLeft: `6px solid ${isStartable ? '#2e7d32' : '#1976d2'}`,
                                             height: '100%',

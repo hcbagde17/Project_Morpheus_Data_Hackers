@@ -8,6 +8,7 @@ import {
 import {
     Timer, NavigateBefore, NavigateNext, Flag, Send,
     CheckCircle, Circle, Warning, Fullscreen, Wifi, WifiOff,
+    Schedule
 } from '@mui/icons-material';
 import { supabase } from '../lib/supabase';
 import useAuthStore from '../store/authStore';
@@ -42,6 +43,8 @@ export default function ExamSession() {
     const [overrideOpen, setOverrideOpen] = useState(false);
     const [disabledModules, setDisabledModules] = useState([]);
     const [preChecksComplete, setPreChecksComplete] = useState(false);
+    const [isWaiting, setIsWaiting] = useState(false);
+    const [waitRemaining, setWaitRemaining] = useState(0);
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const timerRef = useRef(null);
     const clickCountRef = useRef(0);
@@ -172,9 +175,45 @@ export default function ExamSession() {
                     setError(`Failed to start screen recording: ${err.message || 'Check permissions'}`);
                 }
             };
+
+            // Check if we need to wait
+            if (test && test.start_time) {
+                const startTime = new Date(test.start_time).getTime();
+                const now = Date.now();
+                if (now < startTime) {
+                    setIsWaiting(true);
+                    setWaitRemaining(Math.floor((startTime - now) / 1000));
+
+                    // Don't start proctoring or timer yet if waiting
+                    return;
+                }
+            }
+
+            // Start normally
             startProctoringSession();
         }
-    }, [preChecksComplete, submitted, session]);
+    }, [preChecksComplete, submitted, session, test]);
+
+    // Handle Waiting Countdown
+    useEffect(() => {
+        let waitInterval;
+        if (isWaiting) {
+            waitInterval = setInterval(() => {
+                setWaitRemaining(prev => {
+                    if (prev <= 1) {
+                        clearInterval(waitInterval);
+                        setIsWaiting(false);
+                        // Trigger the proctoring start via the other useEffect now that isWaiting is false
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+        }
+        return () => {
+            if (waitInterval) clearInterval(waitInterval);
+        };
+    }, [isWaiting]);
 
     // Admin Override Shortcut (Ctrl + Shift + A)
     useEffect(() => {
@@ -303,23 +342,48 @@ export default function ExamSession() {
             savedAns?.forEach(a => { ansMap[a.question_id] = a.selected_answer; });
             setAnswers(ansMap);
 
-            // Calculate time remaining
-            const elapsed = (Date.now() - new Date(existingSession.started_at).getTime()) / 1000;
-            const remaining = Math.max(0, testData.duration_minutes * 60 - elapsed);
+            // ─── Timer Logic Move ───
+            // We NO LONGER start the timer here. It's started either when `preChecksComplete && !isWaiting` becomes true OR if the session is already in progress.
+            if (!submitted && existingSession && existingSession.status === 'in_progress') {
+                const startTime = new Date(testData.start_time).getTime();
+                const now = Date.now();
+
+                // If they reload and it's physically before the start time, just set the initial time left
+                if (now < startTime) {
+                    setTimeLeft(testData.duration_minutes * 60);
+                } else {
+                    // Timer is started in another effect below if not waiting
+                    const elapsed = (now - new Date(existingSession.started_at).getTime()) / 1000;
+                    const remaining = Math.max(0, testData.duration_minutes * 60 - elapsed);
+                    setTimeLeft(Math.floor(remaining));
+                }
+            }
+        } catch (err) {
+            setError(err.message);
+        }
+        setLoading(false);
+    };
+
+    // Start Exam Timer *after* pre-checks and waiting phase
+    useEffect(() => {
+        if (preChecksComplete && !isWaiting && !submitted && test && session) {
+            // Recalculate time left just in case waiting shifted the start
+            const elapsed = (Date.now() - new Date(session.started_at).getTime()) / 1000;
+            const remaining = Math.max(0, test.duration_minutes * 60 - elapsed);
             setTimeLeft(Math.floor(remaining));
 
-            // Start timer
+            if (timerRef.current) clearInterval(timerRef.current);
             timerRef.current = setInterval(() => {
                 setTimeLeft(prev => {
                     if (prev <= 1) { clearInterval(timerRef.current); handleAutoSubmit(); return 0; }
                     return prev - 1;
                 });
             }, 1000);
-        } catch (err) {
-            setError(err.message);
         }
-        setLoading(false);
-    };
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, [preChecksComplete, isWaiting, submitted, test, session]);
 
     // Triple-click handler for admin override
     const handleTimerClick = () => {
@@ -399,10 +463,28 @@ export default function ExamSession() {
                 totalScore += isCorrect ? q.marks : (test?.settings?.negative_marking ? -q.negative_marks : 0);
             }
 
-            // Update session
+            // Query flags to compute final flag totals for this session
+            let red_flags = 0;
+            let orange_flags = 0;
+            try {
+                const { data: sessionFlags } = await supabase
+                    .from('flags')
+                    .select('severity')
+                    .eq('session_id', session.id);
+
+                if (sessionFlags) {
+                    red_flags = sessionFlags.filter(f => f.severity === 'RED').length;
+                    orange_flags = sessionFlags.filter(f => f.severity === 'ORANGE').length;
+                }
+            } catch (flagErr) {
+                console.error("Error computing flags during submission:", flagErr);
+            }
+
+            // Update session with score and final flag counts
             await supabase.from('exam_sessions').update({
                 status: 'submitted', ended_at: new Date().toISOString(),
                 score: Math.max(0, totalScore),
+                red_flags, orange_flags
             }).eq('id', session.id);
 
             // Stop Proctoring
@@ -437,6 +519,35 @@ export default function ExamSession() {
     // Pre-test checks
     if (!preChecksComplete && !submitted) {
         return <PreTestCheck onComplete={() => setPreChecksComplete(true)} />;
+    }
+
+    // Waiting Screen
+    if (isWaiting && !submitted) {
+        return (
+            <Box sx={{ textAlign: 'center', py: 8, maxWidth: 600, mx: 'auto', mt: 4 }}>
+                <Card sx={{ borderRadius: 4, boxShadow: '0 8px 32px rgba(108,99,255,0.1)' }}>
+                    <CardContent sx={{ p: 6 }}>
+                        <Schedule sx={{ fontSize: 80, color: '#6C63FF', mb: 3 }} />
+                        <Typography variant="h4" fontWeight={800} gutterBottom>
+                            System Checks Complete!
+                        </Typography>
+                        <Typography color="text.secondary" sx={{ mb: 4, fontSize: '1.1rem' }}>
+                            You are early. The exam will start automatically at the scheduled time.
+                            Please wait and keep your browser open.
+                        </Typography>
+
+                        <Paper sx={{ p: 3, bgcolor: 'rgba(108,99,255,0.05)', display: 'inline-block', borderRadius: 3 }}>
+                            <Typography variant="overline" color="primary" fontWeight={700}>
+                                Starting In
+                            </Typography>
+                            <Typography variant="h2" fontWeight={800} color="primary" sx={{ fontFamily: 'monospace' }}>
+                                {formatTime(waitRemaining)}
+                            </Typography>
+                        </Paper>
+                    </CardContent>
+                </Card>
+            </Box>
+        );
     }
 
     // Post-submission view

@@ -17,7 +17,9 @@ export default function Reports() {
     const { user } = useAuthStore();
     const [loading, setLoading] = useState(true);
     const [courseFilter, setCourseFilter] = useState('all');
+    const [testFilter, setTestFilter] = useState('all');
     const [courses, setCourses] = useState([]);
+    const [tests, setTests] = useState([]);
 
     // Chart data
     const [scoreDistribution, setScoreDistribution] = useState([]);
@@ -25,20 +27,52 @@ export default function Reports() {
     const [courseStats, setCourseStats] = useState([]);
     const [trendData, setTrendData] = useState([]);
 
-    useEffect(() => { loadReports(); }, []);
+    useEffect(() => { loadReports(); }, [courseFilter, testFilter]);
 
     const loadReports = async () => {
+        setLoading(true);
         try {
+            const isTeacher = user?.role === 'teacher';
+
             // Courses
-            const { data: crs } = await supabase.from('courses').select('id, name, code').eq('is_active', true);
+            let crsQuery = supabase.from('courses').select('id, name, code').eq('is_active', true);
+            if (isTeacher) crsQuery = crsQuery.eq('teacher_id', user.id);
+            const { data: crs } = await crsQuery;
             setCourses(crs || []);
 
+            // Tests
+            let testQuery = supabase.from('tests').select('id, title, course_id');
+            if (isTeacher && crs?.length > 0) {
+                testQuery = testQuery.in('course_id', crs.map(c => c.id));
+            } else if (isTeacher && (!crs || crs.length === 0)) {
+                setTests([]);
+                setScoreDistribution([]);
+                setFlagBreakdown([]);
+                setCourseStats([]);
+                setTrendData([]);
+                setLoading(false);
+                return;
+            }
+            const { data: tData } = await testQuery;
+            setTests(tData || []);
+
             // All completed sessions
-            const { data: sessions } = await supabase
+            let sessQuery = supabase
                 .from('exam_sessions')
-                .select('*, tests(title, total_marks, course_id, courses(name))')
+                .select('*, tests!inner(title, total_marks, course_id, courses(name))')
                 .in('status', ['submitted', 'completed']);
 
+            if (isTeacher) {
+                sessQuery = sessQuery.in('tests.course_id', crs.map(c => c.id));
+            }
+
+            if (testFilter !== 'all') {
+                sessQuery = sessQuery.eq('test_id', testFilter);
+            } else if (courseFilter !== 'all') {
+                sessQuery = sessQuery.eq('tests.course_id', courseFilter);
+            }
+
+            const { data: sessions } = await sessQuery;
             const allSessions = sessions || [];
 
             // 1. Score Distribution
@@ -54,9 +88,15 @@ export default function Reports() {
             setScoreDistribution(Object.entries(buckets).map(([range, count]) => ({ range, count })));
 
             // 2. Flag Breakdown
-            const { data: flags } = await supabase.from('flags').select('severity, module');
+            let flags = [];
+            if (allSessions.length > 0) {
+                const sessionIds = allSessions.map(s => s.id);
+                const { data: fData } = await supabase.from('flags').select('severity, module').in('session_id', sessionIds);
+                flags = fData || [];
+            }
+
             const moduleMap = {};
-            (flags || []).forEach(f => {
+            flags.forEach(f => {
                 const mod = f.module || 'Unknown';
                 if (!moduleMap[mod]) moduleMap[mod] = { red: 0, orange: 0 };
                 if (f.severity === 'RED') moduleMap[mod].red++;
@@ -111,12 +151,29 @@ export default function Reports() {
 
     return (
         <Box>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3, flexWrap: 'wrap', gap: 2 }}>
                 <Box>
                     <Typography variant="h4" fontWeight={700}>Reports & Analytics</Typography>
-                    <Typography color="text.secondary">Institution-wide performance and proctoring analytics</Typography>
+                    <Typography color="text.secondary">Performance and proctoring analytics</Typography>
                 </Box>
-                <Button variant="outlined" startIcon={<Download />} onClick={exportCSV}>Export CSV</Button>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <TextField select size="small" label="Course Filter" value={courseFilter}
+                        onChange={e => { setCourseFilter(e.target.value); setTestFilter('all'); }}
+                        sx={{ minWidth: 200 }}>
+                        <MenuItem value="all">All Courses</MenuItem>
+                        {courses.map(c => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+                    </TextField>
+
+                    <TextField select size="small" label="Test Filter" value={testFilter}
+                        onChange={e => setTestFilter(e.target.value)}
+                        sx={{ minWidth: 200 }}>
+                        <MenuItem value="all">All Tests</MenuItem>
+                        {tests.filter(t => courseFilter === 'all' || t.course_id === courseFilter).map(t =>
+                            <MenuItem key={t.id} value={t.id}>{t.title}</MenuItem>
+                        )}
+                    </TextField>
+                    <Button variant="outlined" startIcon={<Download />} onClick={exportCSV}>Export CSV</Button>
+                </Box>
             </Box>
 
             {/* Score Distribution & Flag Breakdown */}

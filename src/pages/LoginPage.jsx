@@ -5,6 +5,7 @@ import {
     Alert, InputAdornment, IconButton, CircularProgress,
 } from '@mui/material';
 import { Visibility, VisibilityOff, Security } from '@mui/icons-material';
+import { useTheme } from '@mui/material';
 import useAuthStore from '../store/authStore';
 
 export default function LoginPage() {
@@ -14,6 +15,8 @@ export default function LoginPage() {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
 
     // Redirect if already logged in
     if (user) {
@@ -47,7 +50,9 @@ export default function LoginPage() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'radial-gradient(ellipse at 20% 50%, rgba(108, 99, 255, 0.15) 0%, transparent 50%), radial-gradient(ellipse at 80% 50%, rgba(0, 217, 255, 0.1) 0%, transparent 50%), #0A0E1A',
+            background: isDark
+                ? `radial-gradient(ellipse at 20% 50%, rgba(108, 99, 255, 0.15) 0%, transparent 50%), radial-gradient(ellipse at 80% 50%, rgba(0, 217, 255, 0.1) 0%, transparent 50%), ${theme.palette.background.default}`
+                : `radial-gradient(ellipse at 20% 50%, rgba(108, 99, 255, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 50%, rgba(0, 217, 255, 0.06) 0%, transparent 50%), ${theme.palette.background.default}`,
             p: 2,
         }}>
             <Box sx={{ width: '100%', maxWidth: 440 }}>
@@ -75,9 +80,11 @@ export default function LoginPage() {
 
                 {/* Login Card */}
                 <Card sx={{
-                    background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(17, 24, 39, 0.85) 100%)',
-                    border: '1px solid rgba(108, 99, 255, 0.15)',
-                    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+                    background: isDark
+                        ? 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(17, 24, 39, 0.85) 100%)'
+                        : 'linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.92) 100%)',
+                    border: `1px solid ${isDark ? 'rgba(108, 99, 255, 0.15)' : 'rgba(108, 99, 255, 0.1)'}`,
+                    boxShadow: isDark ? '0 20px 60px rgba(0, 0, 0, 0.5)' : '0 20px 60px rgba(0, 0, 0, 0.08)',
                 }}>
                     <CardContent sx={{ p: 4 }}>
                         <Typography variant="h6" gutterBottom sx={{ mb: 3 }}>

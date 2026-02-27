@@ -9,6 +9,8 @@ import useAuthStore from '../store/authStore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import RichTextEditor from '../components/RichTextEditor';
 import QuestionBankModal from '../components/QuestionBankModal';
+import AIGeneratorModal from '../components/AIGeneratorModal';
+import { AutoAwesome } from '@mui/icons-material';
 
 export default function TestCreation() {
     const navigate = useNavigate();
@@ -23,6 +25,7 @@ export default function TestCreation() {
     });
     const location = useLocation();
     const [questionBankOpen, setQuestionBankOpen] = useState(false);
+    const [aiModalOpen, setAiModalOpen] = useState(false);
     const [questions, setQuestions] = useState([{
         question_text: '', question_type: 'MCQ_SINGLE', options: ['', '', '', ''],
         correct_answer: [], marks: 1, negative_marks: 0,
@@ -67,6 +70,10 @@ export default function TestCreation() {
             test_id: undefined, // remove old test ref
             created_at: undefined
         }))]);
+    };
+
+    const handleGeneratedQuestions = (generated) => {
+        setQuestions([...questions, ...generated]);
     };
 
     const addExtraTime = () => {
@@ -307,6 +314,7 @@ export default function TestCreation() {
             <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
                 <Button variant="outlined" startIcon={<Add />} onClick={addQuestion}>Add Question</Button>
                 <Button variant="outlined" onClick={() => setQuestionBankOpen(true)}>Import from Bank</Button>
+                <Button variant="outlined" startIcon={<AutoAwesome />} color="secondary" onClick={() => setAiModalOpen(true)}>Generate with AI</Button>
                 <Button variant="contained" startIcon={<Save />} onClick={handleSubmit} sx={{ ml: 'auto' }}>
                     Save Test ({questions.length} questions, {questions.reduce((a, q) => a + q.marks, 0)} marks)
                 </Button>
@@ -316,6 +324,12 @@ export default function TestCreation() {
                 open={questionBankOpen}
                 onClose={() => setQuestionBankOpen(false)}
                 onImport={handleImportQuestions}
+            />
+
+            <AIGeneratorModal
+                open={aiModalOpen}
+                onClose={() => setAiModalOpen(false)}
+                onGenerate={handleGeneratedQuestions}
             />
         </Box>
     );

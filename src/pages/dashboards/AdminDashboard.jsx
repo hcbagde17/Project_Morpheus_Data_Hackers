@@ -149,7 +149,7 @@ export default function AdminDashboard() {
                                 activeSessions.slice(0, 3).map((session) => (
                                     <Box key={session.id} sx={{
                                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                        p: 1.5, mb: 1, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.03)',
+                                        p: 1.5, mb: 1, borderRadius: 2, bgcolor: 'action.hover',
                                     }}>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <PlayArrow sx={{ color: '#4ECDC4', fontSize: 18 }} />
