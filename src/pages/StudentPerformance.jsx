@@ -46,13 +46,42 @@ export default function StudentPerformance() {
     };
 
     const loadChildren = async () => {
-        const { data } = await supabase.from('parent_student')
-            .select('student_id, users!parent_student_student_id_fkey(id, username, full_name, email)')
+        // Step 1: get the student IDs linked to this parent
+        const { data: links, error: linkErr } = await supabase
+            .from('parent_student')
+            .select('student_id')
             .eq('parent_id', user.id);
 
-        const kids = data?.map(d => d.users) || [];
-        setStudents(kids);
-        if (kids.length > 0) {
+        if (linkErr) {
+            console.error('[ParentPerformance] parent_student query failed:', linkErr);
+            setLoading(false);
+            return;
+        }
+
+        const studentIds = (links || []).map(l => l.student_id);
+        console.log('[ParentPerformance] Children IDs:', studentIds);
+
+        if (studentIds.length === 0) {
+            console.warn('[ParentPerformance] No children linked to this parent.');
+            setLoading(false);
+            return;
+        }
+
+        // Step 2: fetch the user records for those student IDs
+        const { data: kids, error: kidsErr } = await supabase
+            .from('users')
+            .select('id, username, full_name, email')
+            .in('id', studentIds);
+
+        if (kidsErr) {
+            console.error('[ParentPerformance] users query failed:', kidsErr);
+            setLoading(false);
+            return;
+        }
+
+        console.log('[ParentPerformance] Children found:', kids);
+        setStudents(kids || []);
+        if (kids && kids.length > 0) {
             setSelectedStudent(kids[0].id);
             loadPerformance(kids[0].id);
         } else {
@@ -63,14 +92,23 @@ export default function StudentPerformance() {
     const loadPerformance = async (studentId) => {
         setLoading(true);
         try {
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from('exam_sessions')
                 .select('*, tests(title, total_marks, duration_minutes, courses(name))')
                 .eq('student_id', studentId)
-                .in('status', ['submitted', 'completed'])
+                // Include all non-active statuses so terminated/invalidated sessions are visible
+                .in('status', ['submitted', 'completed', 'terminated', 'invalidated'])
                 .order('ended_at', { ascending: false });
+
+            if (error) {
+                console.error('[ParentPerformance] exam_sessions query failed:', error);
+            } else {
+                console.log(`[ParentPerformance] Sessions for ${studentId}:`, data);
+            }
             setSessions(data || []);
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.error('[ParentPerformance] Unexpected error:', err);
+        }
         setLoading(false);
     };
 

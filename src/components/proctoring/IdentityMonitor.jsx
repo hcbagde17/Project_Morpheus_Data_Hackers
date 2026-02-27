@@ -24,7 +24,7 @@ const MISMATCH_FOR_FLAG = 3;       // consecutive mismatches → ORANGE
 const MISSING_FOR_FLAG = 3;        // consecutive missing → flag
 const MULTIPLE_FOR_FLAG = 2;       // consecutive multiple faces → flag
 
-export default function IdentityMonitor({ active, onStatusChange, embeddingOverride, stream: sharedStream, hidden = false }) {
+export default function IdentityMonitor({ active, onStatusChange, onLivenessUpdate, embeddingOverride, stream: sharedStream, hidden = false }) {
     const { user } = useAuthStore();
     const videoRef = useRef(null);
     const streamRef = useRef(null);
@@ -184,6 +184,7 @@ export default function IdentityMonitor({ active, onStatusChange, embeddingOverr
             // 3. Anti-Spoof gate
             const spoofProb = await checkLiveness(aligned);
             setLastSpoof(spoofProb);
+            onLivenessUpdate?.({ spoofProb, similarity: null });
 
             if (spoofProb > SPOOF_THRESHOLD) {
                 triggerFlag('SPOOF_DETECTED', `Liveness check failed — possible photo/screen attack (${(spoofProb * 100).toFixed(0)}% spoof probability)`, 'high');
@@ -203,6 +204,7 @@ export default function IdentityMonitor({ active, onStatusChange, embeddingOverr
             const embedding = await extractEmbedding(aligned);
             const similarity = cosineSimilarity(centroid, embedding);
             setLastSimilarity(similarity);
+            onLivenessUpdate?.({ spoofProb, similarity });
 
             // 5. Escalation logic
             if (similarity < SIMILARITY_THRESHOLD) {
