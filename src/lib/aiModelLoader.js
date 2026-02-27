@@ -8,11 +8,10 @@ import * as ort from 'onnxruntime-web';
  *   - w600k_r50.onnx   → ArcFace R50 512D face embeddings
  *   - MiniFASNetV2.onnx → Anti-spoof liveness check
  *
- * WASM runtime files are loaded from CDN to avoid Vite bundling conflicts.
+ * WASM runtime files are served locally from public/ (version-matched to the
+ * installed onnxruntime-web npm package) to avoid CDN version mismatches.
  * Model .onnx files are served locally from public/models/arcface/.
  */
-
-const CDN_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
 
 const MODELS = {
     detector: null,
@@ -25,12 +24,13 @@ let loaded = false;
 export const loadAIModels = async () => {
     if (loaded) return;
 
-    // Configure ONNX Runtime to use CDN for WASM files
-    ort.env.wasm.wasmPaths = CDN_BASE;
+    // Serve WASM from public/ via Vite dev server (version-matched to npm package)
+    // Using '/' points ORT to the ort-wasm-simd-threaded.*.wasm files in public/
+    ort.env.wasm.wasmPaths = '/';
     ort.env.wasm.numThreads = 1;
     ort.env.wasm.simd = true;
 
-    console.log('[AI] Loading ONNX models via CDN WASM runtime...');
+    console.log('[AI] Loading ONNX models via local WASM runtime (public/)...');
 
     const opts = { executionProviders: ['wasm'] };
 
