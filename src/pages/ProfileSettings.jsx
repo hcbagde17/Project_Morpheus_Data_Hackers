@@ -63,6 +63,23 @@ export default function ProfileSettings() {
 
     const handleSaveProfile = async () => {
         setSaving(true); setError(''); setSuccess('');
+
+        // Validation for email
+        const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!emailRegex.test(email)) {
+            setError('Please enter a valid email address.');
+            setSaving(false);
+            return;
+        }
+
+        // Validation for phone
+        const phoneRegex = /^\d{10}$/;
+        if (!phoneRegex.test(phone)) {
+            setError('Phone number must be exactly 10 digits.');
+            setSaving(false);
+            return;
+        }
+
         try {
             let profileUrl = user.profile_photo_url;
 
