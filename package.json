@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
-    "seed": "node supabase/seed.mjs"
+    "seed": "node supabase/seed.mjs",
+    "encrypt:models": "node scripts/encryptModels.cjs"
   },
   "build": {
     "appId": "com.proctorwatch.app",
@@ -61,6 +62,7 @@
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.3.1",
     "electron-updater": "^6.1.7",
     "face-api.js": "^0.22.2",
     "koffi": "^2.15.1",
