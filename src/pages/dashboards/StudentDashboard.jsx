@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     Box, Grid, Card, CardContent, Typography, Chip, Button,
     LinearProgress, List, ListItem, ListItemText, ListItemIcon, Avatar,
@@ -20,15 +20,28 @@ export default function StudentDashboard() {
     const { user } = useAuthStore();
     const [upcomingExams, setUpcomingExams] = useState([]);
     const [pastResults, setPastResults] = useState([]);
+    // testId → { status, sessionId, score, totalMarks }
+    // Updated instantly via Realtime so Start Exam vanishes on all devices simultaneously
+    const [mySessionMap, setMySessionMap] = useState({});
     const [flagCount, setFlagCount] = useState(0);
     const [faceRegistered, setFaceRegistered] = useState(false);
     const [loading, setLoading] = useState(true);
     const [adminAuthOpen, setAdminAuthOpen] = useState(false);
+    const channelRef = useRef(null);
 
     useEffect(() => {
         if (user) {
             loadData();
+            fetchSessionMap();       // initial session state for all tests
+            subscribeToSessions();   // real-time lock — fires in Ms on any device
         }
+        return () => {
+            // Clean up Realtime channel on unmount
+            if (channelRef.current) {
+                supabase.removeChannel(channelRef.current);
+                channelRef.current = null;
+            }
+        };
     }, [user]);
 
     const loadData = async () => {
@@ -119,12 +132,71 @@ export default function StudentDashboard() {
         }
     };
 
-    const isExamReady = (test) => {
-        // ... (existing logic)
+    // ── Initial load: build testId → session map ────────────────────────────────
+    const fetchSessionMap = async () => {
+        if (!user) return;
+        const { data } = await supabase
+            .from('exam_sessions')
+            .select('id, test_id, status, score, tests(total_marks)')
+            .eq('student_id', user.id);
+        const map = {};
+        for (const s of (data || [])) {
+            if (!map[s.test_id]) {
+                map[s.test_id] = { status: s.status, sessionId: s.id, score: s.score, totalMarks: s.tests?.total_marks };
+            }
+        }
+        setMySessionMap(map);
+    };
+
+    // ── Real-time lock: fires <500 ms after session row is created on ANY device ─
+    const subscribeToSessions = () => {
+        if (!user || channelRef.current) return;
+        channelRef.current = supabase
+            .channel(`session-lock-${user.id}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'exam_sessions',
+                filter: `student_id=eq.${user.id}`,
+            }, (payload) => {
+                const s = payload.new;
+                if (!s?.test_id) return;
+                console.log('[SessionLock] ⚡ Realtime:', s.test_id, '→', s.status);
+                setMySessionMap(prev => ({
+                    ...prev,
+                    [s.test_id]: {
+                        status: s.status,
+                        sessionId: s.id,
+                        score: s.score ?? prev[s.test_id]?.score,
+                        totalMarks: prev[s.test_id]?.totalMarks,
+                    },
+                }));
+            })
+            .subscribe();
+    };
+
+    /**
+     * Determines the current state of an exam for this student.
+     * 'upcoming'   – too early to start (>5 min before start)
+     * 'ready'      – within the launch window, no session yet
+     * 'active'     – session exists and is in-progress
+     * 'completed'  – session submitted successfully
+     * 'invalidated'– session was voided by admin
+     * 'ended'      – time window has closed, no session was started
+     */
+    const getExamState = (test) => {
         const now = new Date();
         const start = new Date(test.start_time);
-        const diff = (start - now) / 60000; // minutes
-        return diff <= 5 && diff >= -test.duration_minutes;
+        const end = new Date(test.end_time);
+
+        // Session exists → its status takes full priority (hides Start Exam immediately)
+        const session = mySessionMap[test.id];
+        if (session) return session.status; // 'active' | 'completed' | 'invalidated'
+
+        if (now > end) return 'ended';
+        const minsToStart = (start - now) / 60000;
+        if (minsToStart > 5) return 'upcoming';
+        return 'ready';
     };
 
     if (loading) return <LinearProgress sx={{ borderRadius: 1 }} />;
@@ -184,14 +256,26 @@ export default function StudentDashboard() {
                             ) : (
                                 <Box sx={{ maxHeight: 320, overflowY: 'auto', pr: 1 }}>
                                     {upcomingExams.map((exam) => {
-                                        const ready = isExamReady(exam);
+                                        const state = getExamState(exam);
+                                        const session = mySessionMap[exam.id];
                                         const start = new Date(exam.start_time);
+
+                                        const borderColor =
+                                            state === 'ready' ? 'rgba(78,205,196,0.4)' :
+                                                state === 'active' ? 'rgba(255,152,0,0.4)' :
+                                                    state === 'completed' ? 'rgba(76,175,80,0.3)' :
+                                                        state === 'invalidated' ? 'rgba(244,67,54,0.3)' :
+                                                            state === 'ended' ? 'rgba(128,128,128,0.2)' : 'divider';
+                                        const bgColor =
+                                            state === 'ready' ? 'rgba(78,205,196,0.05)' :
+                                                state === 'active' ? 'rgba(255,152,0,0.05)' :
+                                                    state === 'completed' ? 'rgba(76,175,80,0.04)' : 'action.hover';
+
                                         return (
                                             <Box key={exam.id} sx={{
                                                 p: 2, mb: 1.5, borderRadius: 2,
-                                                border: '1px solid',
-                                                borderColor: ready ? 'rgba(78, 205, 196, 0.3)' : 'divider',
-                                                bgcolor: ready ? 'rgba(78, 205, 196, 0.05)' : 'action.hover',
+                                                border: '1px solid', borderColor, bgcolor: bgColor,
+                                                transition: 'border-color 0.3s, background-color 0.3s',
                                             }}>
                                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <Box>
@@ -200,13 +284,37 @@ export default function StudentDashboard() {
                                                             {exam.courses?.name} • {exam.duration_minutes} min • {start.toLocaleString()}
                                                         </Typography>
                                                     </Box>
-                                                    {ready ? (
+
+                                                    {/* ── Per-state action ── */}
+                                                    {state === 'ready' && (
                                                         <Button variant="contained" size="small" startIcon={<PlayArrow />}
                                                             onClick={() => navigate(`/dashboard/exam/${exam.id}`)}
-                                                            sx={{ background: 'linear-gradient(135deg, #4ECDC4, #44B09E)' }}>
+                                                            sx={{ background: 'linear-gradient(135deg,#4ECDC4,#44B09E)', whiteSpace: 'nowrap' }}>
                                                             Start Exam
                                                         </Button>
-                                                    ) : (
+                                                    )}
+                                                    {state === 'active' && (
+                                                        <Button variant="contained" size="small" startIcon={<PlayArrow />}
+                                                            onClick={() => navigate(`/dashboard/exam/${exam.id}`)}
+                                                            sx={{ background: 'linear-gradient(135deg,#FF9800,#F57C00)', whiteSpace: 'nowrap' }}>
+                                                            Resume
+                                                        </Button>
+                                                    )}
+                                                    {state === 'completed' && (
+                                                        <Chip icon={<CheckCircle />}
+                                                            label={session?.score != null ? `✓ ${session.score}/${session.totalMarks ?? '?'}` : '✓ Submitted'}
+                                                            size="small" color="success" variant="outlined"
+                                                            onClick={() => session?.sessionId && navigate(`/dashboard/results/${session.sessionId}`)}
+                                                            sx={{ cursor: 'pointer' }} />
+                                                    )}
+                                                    {state === 'invalidated' && (
+                                                        <Chip label="INVALIDATED" size="small" color="error" />
+                                                    )}
+                                                    {state === 'ended' && (
+                                                        <Chip label="Session Ended" size="small" variant="outlined"
+                                                            sx={{ color: 'text.disabled', borderColor: 'text.disabled' }} />
+                                                    )}
+                                                    {state === 'upcoming' && (
                                                         <Chip label={`Starts ${start.toLocaleDateString()}`} size="small" variant="outlined" />
                                                     )}
                                                 </Box>
@@ -214,6 +322,7 @@ export default function StudentDashboard() {
                                         );
                                     })}
                                 </Box>
+
                             )}
                         </CardContent>
                     </Card>
