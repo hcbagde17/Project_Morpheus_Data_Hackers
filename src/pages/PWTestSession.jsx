@@ -9,13 +9,14 @@ import {
 import {
     Timer, NavigateBefore, NavigateNext, Flag, Send,
     CheckCircle, Circle, Warning, Error as ErrorIcon, ArrowBack,
-    Calculate,
+    Calculate, Security, Face,
 } from '@mui/icons-material';
 
 // Pre-test checks (same as student ExamSession)
 import PreTestCheck from '../components/PreTestCheck';
 
-// Proctoring modules (no IdentityMonitor in PW Test)
+// Proctoring modules
+import IdentityMonitor from '../components/proctoring/IdentityMonitor';
 import DeviceMonitor from '../components/proctoring/DeviceMonitor';
 import VisionBehaviorMonitor from '../components/proctoring/VisionBehaviorMonitor';
 import AudioIntelligence from '../components/proctoring/AudioIntelligence';
@@ -120,6 +121,16 @@ export default function PWTestSession() {
 
     // Calculator state
     const [calcOpen, setCalcOpen] = useState(false);
+
+    // ─── Liveness / Spoof state (from IdentityMonitor) ───
+    const [livenessData, setLivenessData] = useState({ spoofProb: null, similarity: null });
+
+    const handleLivenessUpdate = useCallback(({ spoofProb, similarity }) => {
+        setLivenessData(prev => ({
+            spoofProb: spoofProb ?? prev.spoofProb,
+            similarity: similarity ?? prev.similarity,
+        }));
+    }, []);
 
     // ─── Flag Handler (local only — NO database, NO evidence, NO termination) ───
     const logFlag = useCallback((flag) => {
@@ -488,9 +499,95 @@ export default function PWTestSession() {
                         <Typography variant="caption">Unanswered</Typography>
                     </Box>
                 </Box>
+
+                {/* ─── Liveness & Spoof Risk Panel ─── */}
+                {sharedStream && (
+                    <Box sx={{
+                        mt: 3, p: 1.5, borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: livenessData.spoofProb !== null && livenessData.spoofProb > 0.75
+                            ? 'error.main'
+                            : livenessData.spoofProb !== null && livenessData.spoofProb > 0.4
+                                ? 'warning.main'
+                                : 'divider',
+                        bgcolor: livenessData.spoofProb !== null && livenessData.spoofProb > 0.75
+                            ? 'rgba(255,77,106,0.07)'
+                            : 'transparent',
+                    }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                            <Security sx={{
+                                fontSize: 14,
+                                color: livenessData.spoofProb !== null && livenessData.spoofProb > 0.75
+                                    ? 'error.main'
+                                    : livenessData.spoofProb !== null && livenessData.spoofProb > 0.4
+                                        ? 'warning.main' : 'success.main'
+                            }} />
+                            <Typography variant="caption" fontWeight={700} sx={{ fontSize: '0.65rem', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                                Liveness Check
+                            </Typography>
+                        </Box>
+
+                        {/* Spoof Probability */}
+                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+                            Spoof Risk
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                            <Box sx={{ flex: 1, height: 6, bgcolor: 'action.hover', borderRadius: 3, overflow: 'hidden' }}>
+                                <Box sx={{
+                                    width: livenessData.spoofProb !== null ? `${livenessData.spoofProb * 100}%` : '0%',
+                                    height: '100%',
+                                    borderRadius: 3,
+                                    bgcolor: livenessData.spoofProb > 0.75 ? '#FF4D6A'
+                                        : livenessData.spoofProb > 0.4 ? '#faad14' : '#52c41a',
+                                    transition: 'all 0.5s ease',
+                                }} />
+                            </Box>
+                            <Typography variant="caption" fontWeight={700} sx={{
+                                fontSize: '0.65rem', minWidth: 28, textAlign: 'right',
+                                color: livenessData.spoofProb > 0.75 ? 'error.main'
+                                    : livenessData.spoofProb > 0.4 ? 'warning.main' : 'success.main'
+                            }}>
+                                {livenessData.spoofProb !== null ? `${(livenessData.spoofProb * 100).toFixed(0)}%` : '—'}
+                            </Typography>
+                        </Box>
+
+                        {/* Face Match Score */}
+                        {livenessData.similarity !== null && (
+                            <>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
+                                    Face Match
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Box sx={{ flex: 1, height: 6, bgcolor: 'action.hover', borderRadius: 3, overflow: 'hidden' }}>
+                                        <Box sx={{
+                                            width: `${Math.max(0, livenessData.similarity) * 100}%`,
+                                            height: '100%',
+                                            borderRadius: 3,
+                                            bgcolor: livenessData.similarity >= 0.60 ? '#52c41a' : '#FF4D6A',
+                                            transition: 'all 0.5s ease',
+                                        }} />
+                                    </Box>
+                                    <Typography variant="caption" fontWeight={700} sx={{
+                                        fontSize: '0.65rem', minWidth: 28, textAlign: 'right',
+                                        color: livenessData.similarity >= 0.60 ? 'success.main' : 'error.main',
+                                    }}>
+                                        {`${(livenessData.similarity * 100).toFixed(0)}%`}
+                                    </Typography>
+                                </Box>
+                            </>
+                        )}
+
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontSize: '0.58rem' }}>
+                            {livenessData.spoofProb === null ? 'Waiting for first scan...' :
+                                livenessData.spoofProb > 0.75 ? '⚠ Possible spoof detected' :
+                                    livenessData.spoofProb > 0.4 ? 'Low confidence — remain visible' :
+                                        '✓ Live person confirmed'}
+                        </Typography>
+                    </Box>
+                )}
             </Paper>
 
-            {/* Submit Confirmation — identical to ExamSession */}
+
             <Dialog open={confirmSubmit} onClose={() => setConfirmSubmit(false)}>
                 <DialogTitle>Submit Exam?</DialogTitle>
                 <DialogContent>
@@ -528,6 +625,15 @@ export default function PWTestSession() {
             {/* PROCTORING MONITORS — floating & draggable  */}
             {/* (IdentityMonitor removed for PW Test)       */}
             {/* ═══════════════════════════════════════════ */}
+            {!submitted && !disabledModules.includes('identity') && sharedStream && (
+                <IdentityMonitor
+                    active={!submitted}
+                    hidden={true}
+                    stream={sharedStream}
+                    onStatusChange={logFlag}
+                    onLivenessUpdate={handleLivenessUpdate}
+                />
+            )}
             {!submitted && !disabledModules.includes('device') && (
                 <DeviceMonitor active={!submitted} onFlag={logFlag} />
             )}

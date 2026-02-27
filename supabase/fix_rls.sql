@@ -62,8 +62,11 @@ USING (bucket_id = 'evidence-videos');
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES 
   ('profile-photos', 'profile-photos', true, 5242880, ARRAY['image/jpeg', 'image/png', 'image/webp']),
-  ('evidence-videos', 'evidence-videos', false, 104857600, ARRAY['video/webm', 'video/mp4'])
-ON CONFLICT (id) DO NOTHING;
+  ('evidence-videos', 'evidence-videos', true, 104857600, ARRAY['video/webm', 'video/mp4'])
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+
+-- IMPORTANT: If bucket already exists but is private, this forces it to public:
+UPDATE storage.buckets SET public = true WHERE id = 'evidence-videos';
 
 
 -- STEP 4: Verify

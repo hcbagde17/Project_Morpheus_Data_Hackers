@@ -249,7 +249,7 @@ export default function FlagReview() {
                                     </TableCell>
                                     <TableCell>
                                         <Typography variant="caption" sx={{ maxWidth: 200, display: 'block' }}>
-                                            {f.details?.message || '—'}
+                                            {f.metadata?.message || '—'}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>{f.exam_sessions?.tests?.title || '—'}</TableCell>
@@ -323,7 +323,7 @@ export default function FlagReview() {
                             </Grid>
                             <Grid size={{ xs: 6 }}>
                                 <Typography variant="body2"><strong>Test:</strong> {selectedFlag?.exam_sessions?.tests?.title || '—'}</Typography>
-                                <Typography variant="body2"><strong>Message:</strong> {selectedFlag?.details?.message || '—'}</Typography>
+                                <Typography variant="body2"><strong>Message:</strong> {selectedFlag?.metadata?.message || '—'}</Typography>
                             </Grid>
                         </Grid>
                     </Paper>
