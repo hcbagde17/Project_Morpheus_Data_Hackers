@@ -78,17 +78,37 @@ export default function UserManagement() {
             return;
         }
 
+        // If student, parent details are mandatory
+        if (form.role === 'student') {
+            if (!form.parent_email?.trim()) {
+                setError('Parent email is required for student accounts.');
+                return;
+            }
+            if (!emailRegex.test(form.parent_email.trim())) {
+                setError('Please enter a valid parent email address.');
+                return;
+            }
+            if (!form.parent_phone?.trim()) {
+                setError('Parent phone is required for student accounts.');
+                return;
+            }
+            if (!phoneRegex.test(form.parent_phone.trim())) {
+                setError('Parent phone number must be exactly 10 digits.');
+                return;
+            }
+        }
+
         try {
             // Create the main user
             const user = await createUser(form.full_name, form.email, form.phone, form.role);
 
-            // If student and parent info provided, create and link parent
+            // If student, create and link parent
             if (form.role === 'student' && form.parent_email?.trim()) {
                 if (!emailRegex.test(form.parent_email.trim())) {
                     setError('Please enter a valid parent email address.');
                     return;
                 }
-                if (form.parent_phone && !phoneRegex.test(form.parent_phone)) {
+                if (!phoneRegex.test(form.parent_phone.trim())) {
                     setError('Parent phone number must be exactly 10 digits.');
                     return;
                 }
@@ -298,22 +318,22 @@ export default function UserManagement() {
                         Username: {form.email ? generateUsername(form.email) : '—'}
                     </Typography>
 
-                    {/* Parent Details (only shown for students) */}
+                    {/* Parent Details (only shown for students - REQUIRED) */}
                     {form.role === 'student' && (
                         <Box sx={{ mt: 3 }}>
                             <Divider sx={{ mb: 2 }} />
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                                 <FamilyRestroom fontSize="small" color="primary" />
-                                <Typography variant="subtitle2" color="primary">Parent / Guardian Details</Typography>
+                                <Typography variant="subtitle2" color="primary">Parent / Guardian Details <span style={{ color: 'red' }}>*</span></Typography>
                             </Box>
                             <TextField fullWidth label="Parent Name" value={form.parent_name}
                                 onChange={e => setForm({ ...form, parent_name: e.target.value })} sx={{ mb: 2 }} size="small" />
-                            <TextField fullWidth label="Parent Email" value={form.parent_email}
+                            <TextField fullWidth label="Parent Email *" value={form.parent_email} required
                                 onChange={e => setForm({ ...form, parent_email: e.target.value })} sx={{ mb: 2 }} size="small"
-                                helperText="A parent account will be auto-created if it doesn't exist" />
-                            <TextField fullWidth label="Parent Phone" value={form.parent_phone}
+                                helperText="Required — a parent account will be auto-created if it doesn't exist" />
+                            <TextField fullWidth label="Parent Phone *" value={form.parent_phone} required
                                 onChange={e => setForm({ ...form, parent_phone: e.target.value })} size="small"
-                                helperText="Used as parent's default password" />
+                                helperText="Required — used as parent's default password" />
                         </Box>
                     )}
                 </DialogContent>
