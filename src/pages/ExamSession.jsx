@@ -122,6 +122,28 @@ export default function ExamSession() {
                 timestamp,
             }).select().single();
 
+            // ── Increment flag counters on exam_sessions immediately ──────────
+            // This ensures red_flags / orange_flags are always up-to-date on the
+            // session row, visible to parent/teacher/student performance dashboards
+            // even for terminated sessions (which never go through submitExam).
+            if (!flagErr) {
+                const counterField = dbSeverity === 'RED' ? 'red_flags' : dbSeverity === 'ORANGE' ? 'orange_flags' : null;
+                if (counterField) {
+                    // Fetch current values, increment the right counter + total_flags together
+                    const { data: sessionRow } = await supabase
+                        .from('exam_sessions')
+                        .select('red_flags, orange_flags, total_flags')
+                        .eq('id', session.id)
+                        .single();
+                    if (sessionRow) {
+                        await supabase.from('exam_sessions').update({
+                            [counterField]: (sessionRow[counterField] || 0) + 1,
+                            total_flags: (sessionRow.total_flags || 0) + 1,
+                        }).eq('id', session.id);
+                    }
+                }
+            }
+
             // Capture evidence clip for RED and ORANGE flags
             if (!flagErr && data && (dbSeverity === 'RED' || dbSeverity === 'ORANGE')) {
                 evidenceRef.current.captureForFlag(session.id, data.id, 10);

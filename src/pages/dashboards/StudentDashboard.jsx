@@ -74,12 +74,21 @@ export default function StudentDashboard() {
                 .order('ended_at', { ascending: false });
             setPastResults(results || []);
 
-            // 4. Get Flags Count
-            const { count } = await supabase
-                .from('flags')
-                .select('*', { count: 'exact', head: true })
+            // 4. Get Flags Count — flags has no student_id column, must join via exam_sessions
+            const { data: studentSessions } = await supabase
+                .from('exam_sessions')
+                .select('id')
                 .eq('student_id', user.id);
-            setFlagCount(count || 0);
+            const sessionIds = (studentSessions || []).map(s => s.id);
+            let flagCount = 0;
+            if (sessionIds.length > 0) {
+                const { count: fc } = await supabase
+                    .from('flags')
+                    .select('id', { count: 'exact', head: true })
+                    .in('session_id', sessionIds);
+                flagCount = fc || 0;
+            }
+            setFlagCount(flagCount);
 
         } catch (error) {
             console.error('Error loading dashboard:', error);

@@ -102,12 +102,40 @@ export default function StudentPerformance() {
 
             if (error) {
                 console.error('[ParentPerformance] exam_sessions query failed:', error);
-            } else {
-                console.log(`[ParentPerformance] Sessions for ${studentId}:`, data);
+                setLoading(false);
+                return;
             }
-            setSessions(data || []);
+
+            const sessionList = data || [];
+
+            // Fetch actual flag counts from the flags table (counter columns may be stale)
+            if (sessionList.length > 0) {
+                const sessionIds = sessionList.map(s => s.id);
+                const { data: flagRows } = await supabase
+                    .from('flags')
+                    .select('session_id, severity')
+                    .in('session_id', sessionIds);
+
+                // Build a map of { sessionId: { red, orange } }
+                const flagMap = {};
+                (flagRows || []).forEach(f => {
+                    if (!flagMap[f.session_id]) flagMap[f.session_id] = { red: 0, orange: 0 };
+                    if (f.severity === 'RED') flagMap[f.session_id].red++;
+                    else if (f.severity === 'ORANGE') flagMap[f.session_id].orange++;
+                });
+
+                // Merge live flag counts into sessions
+                const enriched = sessionList.map(s => ({
+                    ...s,
+                    red_flags: flagMap[s.id]?.red ?? s.red_flags ?? 0,
+                    orange_flags: flagMap[s.id]?.orange ?? s.orange_flags ?? 0,
+                }));
+                setSessions(enriched);
+            } else {
+                setSessions([]);
+            }
         } catch (err) {
-            console.error('[ParentPerformance] Unexpected error:', err);
+            console.error('[Performance] Unexpected error:', err);
         }
         setLoading(false);
     };

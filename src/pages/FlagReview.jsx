@@ -30,6 +30,49 @@ export default function FlagReview() {
     const [selectedFlag, setSelectedFlag] = useState(null);
     const [reviewAction, setReviewAction] = useState('');
     const [reviewNotes, setReviewNotes] = useState('');
+    const [videoBlobUrl, setVideoBlobUrl] = useState(null);
+    const [videoLoading, setVideoLoading] = useState(false);
+
+    // When a flag is selected, fetch its video as a blob to bypass Electron CORS
+    // Direct https:// URLs fail in Electron with MEDIA_ERR_SRC_NOT_SUPPORTED (code 4)
+    useEffect(() => {
+        let objectUrl = null;
+
+        const fetchVideoBlob = async () => {
+            if (!selectedFlag?.evidence_url) {
+                setVideoBlobUrl(null);
+                return;
+            }
+            setVideoLoading(true);
+            setVideoBlobUrl(null);
+            try {
+                console.log('[FlagReview] Fetching video blob from:', selectedFlag.evidence_url);
+                const res = await fetch(selectedFlag.evidence_url);
+                if (!res.ok) {
+                    console.error('[FlagReview] ❌ Blob fetch failed:', res.status, res.statusText);
+                    setVideoLoading(false);
+                    return;
+                }
+                const blob = await res.blob();
+                objectUrl = URL.createObjectURL(blob);
+                console.log('[FlagReview] ✅ Blob URL created:', objectUrl, '| type:', blob.type, '| size:', blob.size);
+                setVideoBlobUrl(objectUrl);
+            } catch (err) {
+                console.error('[FlagReview] ❌ Blob fetch error:', err.message);
+            }
+            setVideoLoading(false);
+        };
+
+        fetchVideoBlob();
+
+        // Cleanup: revoke blob URL to free memory
+        return () => {
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+                console.log('[FlagReview] Blob URL revoked');
+            }
+        };
+    }, [selectedFlag?.evidence_url]);
 
     useEffect(() => { loadFilters(); }, []);
 
@@ -64,9 +107,11 @@ export default function FlagReview() {
             return;
         }
 
+        // Use left joins (not !inner) so flags are never silently excluded
+        // when a session's test or course has been deleted/modified
         let query = supabase
             .from('flags')
-            .select('*, exam_sessions!inner(student_id, test_id, tests!inner(title, course_id))')
+            .select('*, exam_sessions(student_id, test_id, tests(title, course_id))')
             .order('timestamp', { ascending: false })
             .limit(100);
 
@@ -91,7 +136,24 @@ export default function FlagReview() {
         if (filter === 'escalated') query = query.eq('review_action', 'escalate');
         if (filter === 'unreviewed') query = query.eq('reviewed', false);
 
-        const { data } = await query;
+        const { data, error } = await query;
+        if (error) {
+            console.error('[FlagReview] ❌ Query failed:', error);
+        } else {
+            console.log(`[FlagReview] ✓ Loaded ${data?.length ?? 0} flags`);
+            const withEvidence = (data || []).filter(f => f.evidence_url);
+            const withoutEvidence = (data || []).filter(f => !f.evidence_url);
+            console.log(`[FlagReview]   → ${withEvidence.length} flags have evidence_url`);
+            console.log(`[FlagReview]   → ${withoutEvidence.length} flags have NO evidence_url`);
+            if (withEvidence.length > 0) {
+                console.log('[FlagReview] Evidence URLs:', withEvidence.map(f => ({
+                    id: f.id,
+                    type: f.flag_type || f.type,
+                    severity: f.severity,
+                    url: f.evidence_url,
+                })));
+            }
+        }
         setFlags(data || []);
         setLoading(false);
     };
@@ -264,7 +326,18 @@ export default function FlagReview() {
                                                 <IconButton
                                                     size="small"
                                                     color="primary"
-                                                    onClick={() => { setSelectedFlag(f); setReviewOpen(true); }}
+                                                    onClick={() => {
+                                                        console.log('[FlagReview] 🔍 Opening flag dialog:', {
+                                                            id: f.id,
+                                                            type: f.flag_type || f.type,
+                                                            severity: f.severity,
+                                                            evidence_url: f.evidence_url,
+                                                            metadata: f.metadata,
+                                                            session_id: f.session_id,
+                                                        });
+                                                        setSelectedFlag(f);
+                                                        setReviewOpen(true);
+                                                    }}
                                                 >
                                                     <PlayArrow />
                                                 </IconButton>
@@ -334,13 +407,43 @@ export default function FlagReview() {
                             <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 <Videocam fontSize="small" /> Evidence Video
                             </Typography>
-                            <Box sx={{ bgcolor: '#000', borderRadius: 2, overflow: 'hidden', maxHeight: 400 }}>
-                                <video
-                                    src={selectedFlag.evidence_url}
-                                    controls
-                                    style={{ width: '100%', maxHeight: 400 }}
-                                />
-                            </Box>
+                            {videoLoading ? (
+                                <Box sx={{ bgcolor: '#000', borderRadius: 2, p: 4, textAlign: 'center' }}>
+                                    <LinearProgress sx={{ mb: 1 }} />
+                                    <Typography variant="caption" color="text.secondary">Loading video...</Typography>
+                                </Box>
+                            ) : videoBlobUrl ? (
+                                <Box sx={{ bgcolor: '#000', borderRadius: 2, overflow: 'hidden', maxHeight: 400 }}>
+                                    <video
+                                        key={videoBlobUrl}
+                                        src={videoBlobUrl}
+                                        controls
+                                        autoPlay={false}
+                                        style={{ width: '100%', maxHeight: 400 }}
+                                        onCanPlay={() => console.log('[FlagReview] ✅ Blob video ready to play')}
+                                        onError={(e) => {
+                                            console.error('[FlagReview] ❌ Blob video error:', {
+                                                code: e.target.error?.code,
+                                                message: e.target.error?.message,
+                                            });
+                                            // Replace video with a link to open externally
+                                            // Happens for VP9 clips recorded before codec fix
+                                            e.target.style.display = 'none';
+                                            const msg = document.createElement('div');
+                                            msg.style.cssText = 'padding:24px;text-align:center;color:#aaa';
+                                            msg.innerHTML = `<p>⚠️ This clip was encoded with VP9 (not supported in Electron).</p><a href="${selectedFlag.evidence_url}" target="_blank" rel="noreferrer" style="color:#6C63FF">Open in browser ↗</a>`;
+                                            e.target.parentNode.appendChild(msg);
+                                        }}
+                                    />
+                                </Box>
+                            ) : (
+                                <Alert severity="warning" sx={{ mb: 1 }}>
+                                    Failed to load video. Try opening the link directly:
+                                </Alert>
+                            )}
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', wordBreak: 'break-all' }}>
+                                {selectedFlag.evidence_url}
+                            </Typography>
                         </Box>
                     ) : (
                         <Alert severity="info" sx={{ mb: 2 }}>

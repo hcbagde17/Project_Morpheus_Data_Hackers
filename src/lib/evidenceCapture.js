@@ -32,15 +32,15 @@ export class EvidenceCapture {
     // ─── MIME type (WebM preferred for broad compatibility) ───────────────────
     _getSupportedMimeType() {
         const types = [
-            'video/webm;codecs=vp9',
-            'video/webm;codecs=vp8',
+            'video/webm;codecs=vp8',   // VP8 is OSS — always works in Electron's FFmpeg
+            'video/webm;codecs=vp9',   // VP9 is proprietary — may fail in Electron
             'video/webm',
             'video/mp4',
         ];
         for (const t of types) {
             if (MediaRecorder.isTypeSupported(t)) return t;
         }
-        return 'video/webm';
+        return 'video/webm;codecs=vp8';
     }
 
     // Returns .webm or .mp4 depending on what MediaRecorder actually uses
