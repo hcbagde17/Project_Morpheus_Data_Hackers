@@ -7,10 +7,11 @@ import {
 import {
     People, School, Assignment, Flag, TrendingUp,
     Warning, CheckCircle, PersonAdd, Upload,
-    Visibility, Block, PlayArrow, Shield,
+    Visibility, Block, PlayArrow, Shield, Key,
 } from '@mui/icons-material';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import OverrideCodeGenerator from '../../components/OverrideCodeGenerator';
 
 // Stat card component
 function StatCard({ title, value, icon, color, subtitle }) {
@@ -46,6 +47,7 @@ export default function AdminDashboard() {
     const [recentUsers, setRecentUsers] = useState([]);
     const [activeSessions, setActiveSessions] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [codeGenOpen, setCodeGenOpen] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -134,6 +136,14 @@ export default function AdminDashboard() {
                                     onClick={() => navigate('/dashboard/blacklist')}>
                                     Manage Blacklist
                                 </Button>
+                                <Button variant="outlined" startIcon={<Key />}
+                                    onClick={() => setCodeGenOpen(true)}
+                                    sx={{
+                                        borderColor: '#6C63FF', color: '#6C63FF',
+                                        '&:hover': { bgcolor: 'rgba(108,99,255,0.08)' }
+                                    }}>
+                                    Generate Override Code
+                                </Button>
                             </Box>
                         </CardContent>
                     </Card>
@@ -219,6 +229,9 @@ export default function AdminDashboard() {
                     </Table>
                 </CardContent>
             </Card>
+
+            {/* Override Code Generator Modal */}
+            <OverrideCodeGenerator open={codeGenOpen} onClose={() => setCodeGenOpen(false)} />
         </Box>
     );
 }
