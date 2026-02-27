@@ -17,7 +17,6 @@ import TestCreation from './TestCreation';
 import TestList from './TestList';
 import ExamSession from './ExamSession';
 import FlagReview from './FlagReview';
-import Reports from './Reports';
 import ProfileSettings from './ProfileSettings';
 import LiveSessionMonitor from './LiveSessionMonitor';
 import StudentPerformance from './StudentPerformance';
@@ -66,7 +65,6 @@ export default function DashboardRouter() {
                         <Route path="tests/create" element={<TestCreation />} />
                         <Route path="tests" element={<TestList />} />
                         <Route path="flags" element={<FlagReview />} />
-                        <Route path="reports" element={<Reports />} />
                         <Route path="profile" element={<ProfileSettings />} />
                         <Route path="live-monitor" element={<LiveSessionMonitor />} />
                         <Route path="performance" element={<StudentPerformance />} />

@@ -35,7 +35,6 @@ const navConfig = {
         { label: 'Live Monitor', icon: <Visibility />, path: '/dashboard/live-monitor' },
         { label: 'Flags', icon: <Flag />, path: '/dashboard/flags' },
         { label: 'Blacklist', icon: <Security />, path: '/dashboard/blacklist' },
-        { label: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     teacher: [
@@ -46,7 +45,6 @@ const navConfig = {
         { label: 'Live Monitor', icon: <Visibility />, path: '/dashboard/live-monitor' },
         { label: 'Performance', icon: <TrendingUp />, path: '/dashboard/performance' },
         { label: 'Review Flags', icon: <Flag />, path: '/dashboard/flags' },
-        { label: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
         { label: 'Profile', icon: <AccountCircle />, path: '/dashboard/profile' },
     ],
     student: [
