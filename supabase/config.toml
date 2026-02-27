@@ -1,0 +1,12 @@
+# Supabase Configuration
+# Update project_id with your actual Supabase project ID (found in project settings)
+project_id = "your-project-id"
+
+[functions.grade-exam]
+verify_jwt = true
+
+[functions.send-notification]
+verify_jwt = true
+
+[functions.test-statistics]
+verify_jwt = true

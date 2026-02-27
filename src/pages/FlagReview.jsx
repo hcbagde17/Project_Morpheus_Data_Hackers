@@ -1,0 +1,293 @@
+import { useState, useEffect } from 'react';
+import {
+    Box, Card, CardContent, Typography, Chip, LinearProgress,
+    Table, TableHead, TableRow, TableCell, TableBody, Button, TextField,
+    Dialog, DialogTitle, DialogContent, DialogActions, MenuItem,
+    IconButton, Tooltip, Paper, Grid, Alert,
+} from '@mui/material';
+import {
+    Flag, CheckCircle, Warning, Visibility, FilterList,
+    PlayArrow, Videocam, Person, Schedule, Info,
+} from '@mui/icons-material';
+import { supabase } from '../lib/supabase';
+
+export default function FlagReview() {
+    const [flags, setFlags] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [filter, setFilter] = useState('all');
+    const [reviewOpen, setReviewOpen] = useState(false);
+    const [selectedFlag, setSelectedFlag] = useState(null);
+    const [reviewAction, setReviewAction] = useState('');
+    const [reviewNotes, setReviewNotes] = useState('');
+
+    useEffect(() => { loadFlags(); }, [filter]);
+
+    const loadFlags = async () => {
+        setLoading(true);
+        let query = supabase
+            .from('flags')
+            .select('*, exam_sessions(student_id, test_id, tests(title))')
+            .order('timestamp', { ascending: false })
+            .limit(100);
+
+        if (filter === 'high' || filter === 'medium' || filter === 'low') {
+            query = query.eq('severity', filter);
+        }
+        if (filter === 'unreviewed') query = query.eq('reviewed', false);
+
+        const { data } = await query;
+        setFlags(data || []);
+        setLoading(false);
+    };
+
+    const handleReview = async () => {
+        if (!selectedFlag) return;
+        await supabase.from('flags').update({
+            reviewed: true,
+            review_action: reviewAction,
+            review_notes: reviewNotes,
+        }).eq('id', selectedFlag.id);
+
+        setReviewOpen(false);
+        setSelectedFlag(null);
+        setReviewAction('');
+        setReviewNotes('');
+        loadFlags();
+    };
+
+    // Stats
+    const totalFlags = flags.length;
+    const highFlags = flags.filter(f => f.severity === 'high').length;
+    const mediumFlags = flags.filter(f => f.severity === 'medium').length;
+    const unreviewedFlags = flags.filter(f => !f.reviewed).length;
+
+    if (loading) return <LinearProgress />;
+
+    return (
+        <Box>
+            {/* Header */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3, alignItems: 'center' }}>
+                <Typography variant="h4" fontWeight={700}>
+                    <Flag sx={{ mr: 1, verticalAlign: 'middle', color: '#FF4D6A' }} />
+                    Flag Review
+                </Typography>
+            </Box>
+
+            {/* Summary Cards */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+                {[
+                    { label: 'Total Flags', value: totalFlags, color: '#6C63FF' },
+                    { label: 'High Severity', value: highFlags, color: '#FF4D6A' },
+                    { label: 'Medium Severity', value: mediumFlags, color: '#FF9800' },
+                    { label: 'Unreviewed', value: unreviewedFlags, color: '#FFC107' },
+                ].map(stat => (
+                    <Grid item xs={6} md={3} key={stat.label}>
+                        <Paper sx={{ p: 2, textAlign: 'center', borderTop: `3px solid ${stat.color}` }}>
+                            <Typography variant="h4" fontWeight={700} color={stat.color}>{stat.value}</Typography>
+                            <Typography variant="caption" color="text.secondary">{stat.label}</Typography>
+                        </Paper>
+                    </Grid>
+                ))}
+            </Grid>
+
+            {/* Filters */}
+            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                {[
+                    { key: 'all', label: 'All', color: 'default' },
+                    { key: 'high', label: '🔴 High', color: 'error' },
+                    { key: 'medium', label: '🟠 Medium', color: 'warning' },
+                    { key: 'low', label: '🟡 Low', color: 'default' },
+                    { key: 'unreviewed', label: 'Unreviewed', color: 'info' },
+                ].map(f => (
+                    <Chip
+                        key={f.key}
+                        label={f.label}
+                        onClick={() => setFilter(f.key)}
+                        size="small"
+                        variant={filter === f.key ? 'filled' : 'outlined'}
+                        color={f.color}
+                    />
+                ))}
+            </Box>
+
+            {/* Flags Table */}
+            <Card>
+                <CardContent sx={{ p: 0 }}>
+                    <Table size="small">
+                        <TableHead>
+                            <TableRow sx={{ bgcolor: 'rgba(108,99,255,0.05)' }}>
+                                <TableCell sx={{ fontWeight: 700 }}>Type</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Severity</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Details</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Test</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Time</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Evidence</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                                <TableCell sx={{ fontWeight: 700 }}>Action</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {flags.map(f => (
+                                <TableRow
+                                    key={f.id}
+                                    hover
+                                    sx={{
+                                        borderLeft: f.severity === 'high' ? '3px solid #FF4D6A' :
+                                            f.severity === 'medium' ? '3px solid #FF9800' : '3px solid #ccc'
+                                    }}
+                                >
+                                    <TableCell>
+                                        <Typography variant="body2" fontWeight={600} sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                            {f.type || f.flag_type}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Chip
+                                            label={f.severity}
+                                            size="small"
+                                            color={f.severity === 'high' ? 'error' : f.severity === 'medium' ? 'warning' : 'default'}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Typography variant="caption" sx={{ maxWidth: 200, display: 'block' }}>
+                                            {f.details?.message || '—'}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>{f.exam_sessions?.tests?.title || '—'}</TableCell>
+                                    <TableCell>
+                                        <Typography variant="caption">
+                                            {f.timestamp ? new Date(f.timestamp).toLocaleString() : '—'}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        {f.evidence_url ? (
+                                            <Tooltip title="View Evidence">
+                                                <IconButton
+                                                    size="small"
+                                                    color="primary"
+                                                    onClick={() => { setSelectedFlag(f); setReviewOpen(true); }}
+                                                >
+                                                    <PlayArrow />
+                                                </IconButton>
+                                            </Tooltip>
+                                        ) : (
+                                            <Typography variant="caption" color="text.disabled">—</Typography>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        {f.reviewed ? (
+                                            <Chip label="Reviewed" size="small" color="success" icon={<CheckCircle />} />
+                                        ) : (
+                                            <Chip label="Pending" size="small" color="warning" variant="outlined" />
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        <Button
+                                            size="small"
+                                            variant={f.reviewed ? 'text' : 'contained'}
+                                            onClick={() => { setSelectedFlag(f); setReviewOpen(true); }}
+                                        >
+                                            {f.reviewed ? 'View' : 'Review'}
+                                        </Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                            {flags.length === 0 && (
+                                <TableRow>
+                                    <TableCell colSpan={8} align="center" sx={{ py: 6 }}>
+                                        <Info sx={{ fontSize: 48, color: '#ccc', mb: 1 }} />
+                                        <Typography variant="body2" color="text.secondary">
+                                            No flags found matching this filter.
+                                        </Typography>
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
+
+            {/* Review Dialog */}
+            <Dialog open={reviewOpen} onClose={() => setReviewOpen(false)} maxWidth="md" fullWidth>
+                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Warning color={selectedFlag?.severity === 'high' ? 'error' : 'warning'} />
+                    Review Flag: {selectedFlag?.type || selectedFlag?.flag_type}
+                </DialogTitle>
+                <DialogContent>
+                    {/* Flag Details */}
+                    <Paper sx={{ p: 2, mb: 2, bgcolor: 'rgba(108,99,255,0.03)', borderRadius: 2 }}>
+                        <Grid container spacing={2}>
+                            <Grid item xs={6}>
+                                <Typography variant="body2"><strong>Type:</strong> {selectedFlag?.type || selectedFlag?.flag_type}</Typography>
+                                <Typography variant="body2"><strong>Severity:</strong> {selectedFlag?.severity}</Typography>
+                                <Typography variant="body2"><strong>Time:</strong> {selectedFlag?.timestamp ? new Date(selectedFlag.timestamp).toLocaleString() : '—'}</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                                <Typography variant="body2"><strong>Test:</strong> {selectedFlag?.exam_sessions?.tests?.title || '—'}</Typography>
+                                <Typography variant="body2"><strong>Message:</strong> {selectedFlag?.details?.message || '—'}</Typography>
+                            </Grid>
+                        </Grid>
+                    </Paper>
+
+                    {/* Evidence Video */}
+                    {selectedFlag?.evidence_url && (
+                        <Box sx={{ mb: 2 }}>
+                            <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Videocam fontSize="small" /> Evidence Video
+                            </Typography>
+                            <Box sx={{ bgcolor: '#000', borderRadius: 2, overflow: 'hidden', maxHeight: 400 }}>
+                                <video
+                                    src={selectedFlag.evidence_url}
+                                    controls
+                                    style={{ width: '100%', maxHeight: 400 }}
+                                />
+                            </Box>
+                        </Box>
+                    )}
+
+                    {!selectedFlag?.reviewed && (
+                        <>
+                            <TextField
+                                fullWidth
+                                select
+                                label="Action"
+                                value={reviewAction}
+                                onChange={e => setReviewAction(e.target.value)}
+                                sx={{ mb: 2 }}
+                            >
+                                <MenuItem value="dismiss">Dismiss — No Action</MenuItem>
+                                <MenuItem value="warn">Warn Student</MenuItem>
+                                <MenuItem value="invalidate">Invalidate Exam</MenuItem>
+                                <MenuItem value="escalate">Escalate to Admin</MenuItem>
+                            </TextField>
+                            <TextField
+                                fullWidth
+                                multiline
+                                rows={3}
+                                label="Review Notes"
+                                value={reviewNotes}
+                                onChange={e => setReviewNotes(e.target.value)}
+                                placeholder="Add notes about this flag..."
+                            />
+                        </>
+                    )}
+
+                    {selectedFlag?.reviewed && (
+                        <Alert severity="success" sx={{ mt: 2 }}>
+                            <strong>Reviewed</strong> — Action: {selectedFlag.review_action || 'N/A'}
+                            {selectedFlag.review_notes && <Typography variant="body2" sx={{ mt: 1 }}>{selectedFlag.review_notes}</Typography>}
+                        </Alert>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setReviewOpen(false)}>Close</Button>
+                    {!selectedFlag?.reviewed && (
+                        <Button variant="contained" onClick={handleReview} disabled={!reviewAction}>
+                            Submit Review
+                        </Button>
+                    )}
+                </DialogActions>
+            </Dialog>
+        </Box>
+    );
+}
