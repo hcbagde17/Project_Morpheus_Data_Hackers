@@ -197,10 +197,28 @@ export default function ExamSession() {
         setDisabledModules(['identity', 'device', 'behavior', 'audio', 'network', 'object_detection', 'enforcement']);
     }, [stopBackendServices]);
 
-    // ─── Load exam from DB ───
-    const loadExam = async () => {
+    // ─── Load test metadata only (called on mount, before pre-checks) ───────
+    // Does NOT create a session — that happens in loadExam() after pre-checks.
+    const loadTestMeta = async () => {
         try {
-            // Fetch test
+            const { data: testData, error: testErr } = await supabase
+                .from('tests').select('*').eq('id', testId).single();
+            if (testErr) throw testErr;
+            setTest(testData);
+            setTimeLeft(testData.duration_minutes * 60);
+        } catch (err) {
+            console.error('Failed to load test metadata', err);
+            setError(err.message || 'Failed to load test');
+        }
+        setLoading(false);
+    };
+
+    // ─── Load exam from DB (called after pre-checks pass) ────────────────────
+    // This is where the exam_sessions INSERT finally happens.
+    const loadExam = async () => {
+        setLoading(true);
+        try {
+            // Re-fetch test to ensure fresh data
             const { data: testData, error: testErr } = await supabase
                 .from('tests').select('*').eq('id', testId).single();
             if (testErr) throw testErr;
@@ -305,15 +323,26 @@ export default function ExamSession() {
         } catch (err) { console.error('Sync failed', err); }
     };
 
-    // ─── Load exam on mount ───
+    // ─── Load test metadata on mount (NO session created yet) ──────────────
+    // Session INSERT is intentionally deferred until after pre-checks pass.
+    // This ensures the "Start Exam" button on the dashboard remains visible
+    // while the student is going through pre-test checks, and disappears only
+    // when they have actually entered the exam from a device.
     useEffect(() => {
-        loadExam();
+        loadTestMeta();
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
             if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
             stopBackendServices();
         };
     }, [testId]);
+
+    // ─── Create session + load questions AFTER pre-checks pass ─────────────
+    useEffect(() => {
+        if (preChecksComplete) {
+            loadExam();
+        }
+    }, [preChecksComplete]);
 
     // ─── Stop proctoring when submitted ───
     useEffect(() => {
