@@ -52,12 +52,14 @@ export default function StudentCalendar() {
                 return;
             }
 
-            // Get tests for these courses
+            // Get only upcoming/active tests (exclude expired)
+            const now = new Date().toISOString();
             const { data } = await supabase
                 .from('tests')
                 .select('*, courses(name, code)')
                 .in('course_id', courseIds)
-                .order('start_time', { ascending: true }); // Ascending for upcoming
+                .gt('end_time', now)          // skip anything already expired
+                .order('start_time', { ascending: true }); // nearest exam first
 
             setTests(data || []);
         } catch (error) {
@@ -116,7 +118,7 @@ export default function StudentCalendar() {
             </Box>
 
             {tests.length === 0 ? (
-                <Alert severity="info">No upcoming exams found for your enrolled courses.</Alert>
+                <Alert severity="info">You have no upcoming exams scheduled.</Alert>
             ) : (
                 Object.entries(grouped).map(([date, dayTests]) => (
                     <Box key={date} sx={{ mb: 4 }}>
