@@ -5,10 +5,8 @@ import '@tensorflow/tfjs';
 
 /**
  * ObjectDetection Component
- * Uses COCO-SSD to detect:
- * 1. Cell Phones (Prohibited)
- * 2. Multiple Persons (Prohibited)
- * 3. No Person (Prohibited - Leaving seat)
+ * Uses COCO-SSD to detect cell phones in the webcam frame.
+ * Person / multi-face detection is handled by IdentityMonitor.
  */
 export default function ObjectDetection({ active, stream, onFlag }) {
     const videoRef = useRef(null);
@@ -20,12 +18,22 @@ export default function ObjectDetection({ active, stream, onFlag }) {
     useEffect(() => {
         const loadModel = async () => {
             try {
-                console.log('Loading COCO-SSD model...');
-                const loadedModel = await cocoSsd.load({ base: 'mobilenet_v2' }); // lighter model
+                console.log('Loading COCO-SSD model from local bundle...');
+                const loadedModel = await cocoSsd.load({
+                    modelUrl: '/models/coco-ssd/model.json',
+                });
                 setModel(loadedModel);
-                console.log('COCO-SSD loaded');
+                console.log('COCO-SSD loaded from local bundle ✔');
             } catch (err) {
-                console.error('Failed to load object detection model:', err);
+                console.warn('Local COCO-SSD model not found, falling back to CDN:', err.message);
+                try {
+                    // Fallback: CDN (requires internet) — run scripts/download_coco_ssd.cjs to avoid this
+                    const loadedModel = await cocoSsd.load({ base: 'mobilenet_v2' });
+                    setModel(loadedModel);
+                    console.log('COCO-SSD loaded from CDN (fallback)');
+                } catch (fallbackErr) {
+                    console.error('Failed to load object detection model:', fallbackErr);
+                }
             }
         };
         loadModel();
@@ -45,6 +53,9 @@ export default function ObjectDetection({ active, stream, onFlag }) {
         isRunning.current = true;
         let animationId;
 
+        // Phone detection threshold — ORANGE flag (warning only)
+        const PHONE_THRESHOLD = 0.30;
+
         const detectFrame = async () => {
             if (!isRunning.current || !videoRef.current || videoRef.current.readyState !== 4) {
                 animationId = requestAnimationFrame(detectFrame);
@@ -54,33 +65,19 @@ export default function ObjectDetection({ active, stream, onFlag }) {
             try {
                 const predictions = await model.detect(videoRef.current);
 
-                // Analysis
-                let personCount = 0;
-                let cellPhoneDetected = false;
+                const cellPhoneDetected = predictions.some(
+                    pred => pred.class === 'cell phone' && pred.score > PHONE_THRESHOLD
+                );
 
-                predictions.forEach(pred => {
-                    if (pred.class === 'person' && pred.score > 0.6) personCount++;
-                    if (pred.class === 'cell phone' && pred.score > 0.6) cellPhoneDetected = true;
-                });
-
-                const now = Date.now();
-
-                // Check Rules
                 if (cellPhoneDetected) {
-                    emitFlag('PHONE_DETECTED', 'Cell phone detected in frame.', 'high');
-                } else if (personCount > 1) {
-                    emitFlag('MULTIPLE_PEOPLE', `${personCount} people detected in frame.`, 'high');
-                } else if (personCount === 0) {
-                    // Check if valid "no user" check or just glitch. 
-                    // Usually better to be handled by FaceAPI for "No Face", but this backs it up.
-                    // We'll skip flagging solely on this for now to avoid conflict with IdentityMonitor
+                    emitFlag('PHONE_DETECTED', 'Cell phone detected in frame.', 'medium');
                 }
 
             } catch (err) {
                 console.warn('Detection error:', err);
             }
 
-            // Throttle to ~2-3 FPS to save CPU
+            // Throttle to ~2 FPS to save CPU
             setTimeout(() => {
                 if (isRunning.current) animationId = requestAnimationFrame(detectFrame);
             }, 500);
